@@ -5,6 +5,7 @@ import BuildingSummary from './ui/BuildingSummary'
 import PropertyInspector from './ui/PropertyInspector'
 import { DEFAULT_BUILDING_CONFIG } from './scene/buildingConfig'
 import { buildApartmentUnits, findUnitById } from './scene/unitLayout'
+import { runPrototypeUlpinSelfCheck } from './ulpin/ulpinSelfCheck'
 
 /**
  * The application shell — and, as of Phase 5, the owner of two things the whole
@@ -43,7 +44,20 @@ function App() {
    * literal rather than merely likely: the scene and the panels hold the same
    * objects, not equal copies.
    */
-  const units = useMemo(() => buildApartmentUnits(config), [config])
+  const units = useMemo(() => {
+    const generated = buildApartmentUnits(config)
+
+    // Development-only. `import.meta.env.DEV` is a compile-time constant, so
+    // this whole branch is removed from the production bundle. It checks the
+    // identifiers that were *actually attached to these units*, not a freshly
+    // generated look-alike set — the point is to catch a wiring mistake in the
+    // model layer, which a self-contained check would sail straight past.
+    if (import.meta.env.DEV) {
+      runPrototypeUlpinSelfCheck(generated.map((unit) => unit.prototypeUlpin))
+    }
+
+    return generated
+  }, [config])
 
   /**
    * Which unit is selected — stored as an **id**, not as the unit object.

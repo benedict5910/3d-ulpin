@@ -717,9 +717,286 @@ interaction to the model that already existed.
 
 ---
 
-## 6. Repository shape
+## 6. The prototype 3D ULPIN identifier (Phase 6)
 
-### As built (Phases 1–5 — this exists now)
+> **PROTOTYPE NOTICE.** The identifier described in this section is an **encoding
+> scheme invented for this SIH demonstration**. It is **not** the official
+> Government of India ULPIN format, it is not derived from any published
+> specification, and none of its codes name real land. The contribution being
+> demonstrated is the *idea* — that a vertical property can be named by composing
+> a land-parcel identity with a position inside the building standing on it — not
+> the particular letters chosen to express it. Everywhere the identifier is shown
+> to a user it is labelled **"Prototype encoding – demonstration only"**.
+
+Phases 3–5 gave every unit a **shape** (bounds, area, volume, elevation) and a
+way to **point at it** (click → selection → inspector). What no unit had was a
+**name**. A cadastre is not a collection of boxes; it is a collection of boxes
+that can be referred to — in a deed, a tax record, a dispute, an API call.
+Phase 6 gives each of the twenty volumes a name that is unique, deterministic,
+and readable by a human.
+
+### 6.1 The format
+
+```
+KA - BLR - 0482 - 001928 - F03 - U02
+│    │     │      │        │     └─ unit index on that floor, 1-based, zero-padded to 2
+│    │     │      │        └─────── floor level, 1-based, zero-padded to 2
+│    │     │      └──────────────── parent land-parcel number within the zone (6 digits)
+│    │     └─────────────────────── spatial / zone code within the city (4 digits)
+│    └───────────────────────────── city or district demo code (3 letters)
+└────────────────────────────────── state code (2 letters)
+```
+
+The first four segments — `KA-BLR-0482-001928` — are the **parent parcel
+identifier**: the flat, ground-level, 2D thing that ULPIN-style systems already
+name today. The last two segments are the **vertical extension**: where inside
+the building standing on that parcel this particular property is.
+
+Read it as a sentence: *"on parcel 001928, in zone 0482 of Bengaluru, Karnataka —
+the second property on the third floor."*
+
+### 6.2 The parcel identity structure
+
+`src/ulpin/parcelIdentity.ts`:
+
+```ts
+export interface ParcelIdentity {
+  readonly stateCode: string    // 'KA'
+  readonly cityCode: string     // 'BLR'
+  readonly zoneCode: string     // '0482'
+  readonly parcelNumber: string // '001928'
+}
+
+export const DEMO_PARCEL_IDENTITY: ParcelIdentity = {
+  stateCode: 'KA', cityCode: 'BLR', zoneCode: '0482', parcelNumber: '001928',
+}
+```
+
+Three decisions are embedded here.
+
+**Four fields, not one string.** `'KA-BLR-0482-001928'` as a single constant
+would be less code and strictly worse. Each segment means something on its own:
+the code lists differ per administrative level, a later map layer will want to
+filter by zone, and a validator must be able to check the parcel number's width
+without re-splitting text it has just joined. Text is *assembled* from the
+fields; the fields are never *parsed back out of* the text.
+
+**Every field is a `string`, never a `number`.** `0482` and `001928` carry
+meaningful leading zeros. Stored as numbers they become `482` and `1928`, and
+the zeros have to be guessed back at display time. Identifier segments are
+codes, not quantities — nothing here is ever added or averaged.
+
+**Parcel identity lives apart from `BuildingConfig`.** The building's
+*dimensions* and the parcel's *identity* are unrelated facts that happen to
+describe the same site. A building can be redesigned without moving; a parcel
+can be renumbered without the building changing. Keeping them in separate
+modules means the phase that loads real parcels from a GIS layer replaces one
+file and leaves the geometry untouched.
+
+### 6.3 The generator
+
+`src/ulpin/generateUlpin.ts`:
+
+```ts
+generatePrototype3DULPIN(parcel: ParcelIdentity, floorLevel: number, unitIndex: number): string
+```
+
+Pure: no React, no Three.js, no I/O, no clock, no randomness. The same three
+inputs return the same string forever — which is the entire point of an
+identifier. Purity is also what lets the self-check execute the real function
+in plain Node, with no browser and no test runner.
+
+It does three things:
+
+1. **Validates.** `floorLevel` and `unitIndex` must be 1-based positive
+   integers. `0`, `-1`, `2.5` and `NaN` are all upstream bugs, and each would
+   otherwise produce a plausible-looking identifier (`F00`, `F-1`, `F2.5`).
+   Throwing here reports the error where it was introduced.
+2. **Pads.** `String(value).padStart(2, '0')` → `F01`, `F03`, `F12`. Values
+   wider than the pad are left intact rather than truncated: a 120-storey tower
+   should produce an ugly identifier, never a wrong one.
+3. **Joins.** `parentParcelId` + `F<floor>` + `U<index>`, one separator.
+
+### 6.4 Generation flow — and why it happens at the model layer
+
+```
+DEMO_PARCEL_IDENTITY ──┐
+                       ├──► buildApartmentUnits(config, floors, parcel)
+DEFAULT_BUILDING_CONFIG┘             │
+                                     │  per floor, per grid cell:
+                                     │    bounds  ← geometry maths
+                                     │    prototypeUlpin ← generatePrototype3DULPIN(
+                                     │                        parcel, floor.level, indexOnFloor)
+                                     ▼
+                        assertUniqueIdentifiers(...)   ← throws on any duplicate
+                                     ▼
+                              ApartmentUnit[]  (20 units, each already named)
+                                     ▼
+                        App ──► SceneViewer / PropertyInspector
+```
+
+The identifier is produced **in the same loop iteration that produces the
+geometry**, from the same inputs, and is stored on the same record. That is a
+deliberate architectural choice, and it is the most important one in this phase:
+
+- **One pass, one truth.** A unit's volume and a unit's name are two facts about
+  one property. Computing them together, from one set of inputs, means they
+  cannot come to describe different things. Computing the name later, elsewhere,
+  from a copy of the inputs, means they can.
+- **The view displays data; it does not invent it.** If `PropertyInspector`
+  built the string, then the identifier would exist only while that panel was
+  open. A GIS export, a URL, a printed record and a second panel would each need
+  their own copy of the encoding rule — four places to change, three of them
+  easy to forget. Because the unit carries `prototypeUlpin`, every consumer
+  reads the same string, and the inspector's job stays what Phase 5 made it:
+  render a record it was handed.
+- **Validation has somewhere to stand.** Uniqueness can only be checked over the
+  *whole set*, and the whole set exists exactly once — at the moment
+  `buildApartmentUnits` returns it. A panel sees one unit at a time and could
+  never notice a collision.
+
+`ApartmentUnit` gained two fields, both `readonly` like the rest:
+
+| Field | Example | Why on the unit |
+|---|---|---|
+| `parentParcelId` | `KA-BLR-0482-001928` | "which land is this?" without importing the parcel config |
+| `prototypeUlpin` | `KA-BLR-0482-001928-F03-U02` | the unit's name, generated with its geometry |
+
+### 6.5 Apartment number ≠ unit index — the distinction that matters most
+
+These two values are 3 and 2 for the same property and are easy to confuse:
+
+| | `unitNumber` | `indexOnFloor` |
+|---|---|---|
+| Example | `"302"` | `2` |
+| Type | `string` | `number` |
+| Means | the label on the door | the unit's ordinal position on its floor |
+| Comes from | a human numbering convention | the generation loop |
+| Used for | display | the `U` segment of the identifier |
+
+For apartment **302**: floor is **3**, index on floor is **2**, and the
+identifier is `KA-BLR-0482-001928-F03-U02`. The `02` in the identifier and the
+`02` in the door number look alike here only because the prototype numbers doors
+as *floor* + *index*. That is a convention, not a rule. Real buildings label
+doors `3A`/`3B`, skip 13, restart per wing or tower, renumber after a
+subdivision, and reuse numbers across blocks. Every one of those breaks a parser
+that recovers the index from the label — silently, producing a well-formed
+identifier for the wrong property.
+
+So the rule enforced in code is: **the identifier is never derived by parsing
+the human-readable unit number.** The generator is handed `floor.level` and
+`indexOnFloor` as structured numbers that the loop already holds. `unitNumber`
+is display text and has no other job.
+
+Phase 6 deliberately **did not** add a parallel `unitIndexWithinFloor` field:
+`indexOnFloor` already carries exactly that value, reliably, generated as
+`row * unitColumns + column + 1`. Two fields meaning the same thing is the drift
+this model avoids everywhere else — the same reason the mesh centre is a
+function of the bounds rather than a stored field (§4.3).
+
+### 6.6 Uniqueness — and why it fails loudly
+
+`buildApartmentUnits` calls `assertUniqueIdentifiers` over all twenty generated
+identifiers before returning them, and **throws** on any duplicate.
+
+A duplicate would mean two distinct 3D volumes claiming to be the same property
+— precisely the ownership ambiguity this project exists to remove. It would also
+be **invisible**: each inspector panel would look perfectly correct on its own,
+and the demo would show two flats with one name and nobody would notice until a
+judge did. A warning would scroll past; a silent skip would hide the cause. A
+thrown error at generation time stops the app at the moment the wrong data is
+created, which is the only moment the message can point at the cause.
+
+The split is deliberate: `findDuplicateIdentifiers` is a pure function returning
+data, so a future import screen can list offending rows next to their input;
+`assertUniqueIdentifiers` is the policy that says "for generated units, this is
+fatal".
+
+This is a **uniqueness** check and nothing more. Overlapping volumes, gaps
+between floors, units that escape their building — the topology validation
+engine — is a later phase, and none of it is smuggled in here.
+
+### 6.7 Why zero padding
+
+`F03`, not `F3`. Four reasons, in order of how much they will matter:
+
+1. **Sorting.** As text, `F10` sorts before `F2`. With fixed width, `F02` sorts
+   before `F10`, so identifiers sort into building order in any list, database
+   index, spreadsheet or filename.
+2. **Fixed width.** Every identifier for a given parcel is the same length, so
+   segments sit at known offsets, columns line up in a table, and a truncated or
+   corrupted string is visible at a glance.
+3. **No ambiguity.** `F12` cannot be read as floor 1 unit 2.
+4. **Room to grow.** Two digits cover 99 floors and 99 units per floor without
+   the format changing shape — and a 100th does not break it, it just widens
+   that one identifier.
+
+### 6.8 Self-check without a test runner
+
+The project has no test framework, and adding one is not this phase's job. So
+the checks are an ordinary pure function, `checkPrototypeUlpin()` in
+`src/ulpin/ulpinSelfCheck.ts`, that returns results and neither logs nor throws.
+The day Vitest arrives, its body becomes a test file unchanged.
+
+Two kinds of check:
+
+- **Known-answer cases**, written as literal strings — `F01-U01`, `F03-U02`,
+  `F05-U04`. Literals on purpose: an expectation computed the same way as the
+  code under test proves nothing. These are the answers a human decided the
+  format must give, so any change to padding, prefixes, separator or field order
+  breaks them.
+- **Uniqueness** across all twenty.
+
+`runPrototypeUlpinSelfCheck()` wraps it, logs failures with `console.error` and
+rethrows. `App` calls it inside `if (import.meta.env.DEV)`, which Vite evaluates
+at compile time — so the check runs on every dev reload and the entire branch is
+removed from the production bundle. It is passed the identifiers **actually
+attached to the generated units**, not a freshly generated look-alike set: the
+point is to catch a wiring mistake in the model layer, which a self-contained
+check would sail straight past.
+
+### 6.9 How this is shown
+
+`PropertyInspector` gained a leading block and one row, and nothing else
+changed — the Phase 5 panel absorbed the identifier as data, exactly as
+predicted:
+
+```
+┌──────────────────────────────────┐
+│ ▎PROTOTYPE 3D ULPIN              │  ← accent rule, accent label
+│ ▎KA-BLR-0482-001928-F03-U02      │  ← monospace, largest value in the panel
+│ ▎Prototype encoding –            │  ← always with the identifier
+│ ▎demonstration only              │
+├──────────────────────────────────┤
+│ Parent parcel   KA-BLR-0482-001928│
+│ Unit            302              │
+│ Floor           3                │
+│ …                                │
+```
+
+Prominence is carried by four cheap signals at once — a tinted inset card, a
+left accent rule, a larger monospace value, and the only non-muted label in the
+panel — rather than by one loud one. Everything below the block *describes* the
+property; the block *names* it, and that hierarchy is the point.
+
+The disclaimer text is a shared constant, `PROTOTYPE_ENCODING_NOTE`, not a
+string typed into the component, so it cannot appear in one place and be
+forgotten in another.
+
+### 6.10 What Phase 6 deliberately does not do
+
+No GIS or map layer. No topology or overlap validation. No ownership-conflict
+simulation. No AI. No backend, no database, no government API. No basement
+levels and no negative floors. No exploded view. No decoder — nothing yet needs
+to read an identifier back apart, and a parser written before it has a caller is
+a parser written against a guess. All of these are later phases or non-goals;
+none of them is worth a partial implementation now.
+
+---
+
+## 7. Repository shape
+
+### As built (Phases 1–6 — this exists now)
 
 ```
 3d-ulpin/
@@ -733,12 +1010,18 @@ interaction to the model that already existed.
 └─ src/
    ├─ main.tsx               # entry point: mounts <App> into #root
    ├─ App.tsx                # page shell + Phase 5: owns the units array and the selection
+   │                       # Phase 6: runs the identifier self-check in dev
    ├─ index.css              # dark theme; global styles
    ├─ vite-env.d.ts          # tells TypeScript about Vite-specific imports (e.g. CSS)
+   ├─ ulpin/                 # the identifier, added Phase 6 — no React, no Three.js
+   │  ├─ parcelIdentity.ts   # ParcelIdentity, DEMO_PARCEL_IDENTITY, parent-parcel text
+   │  ├─ generateUlpin.ts    # generatePrototype3DULPIN(), padding, uniqueness guard
+   │  └─ ulpinSelfCheck.ts   # pure known-answer + uniqueness checks; dev-only runner
    ├─ scene/                 # everything 3D (added Phase 2)
    │  ├─ buildingConfig.ts   # Phase 3: the config type, floor maths, total height
    │  ├─ unitLayout.ts       # Phase 4: ApartmentUnit, the 2 x 2 subdivision, centres
    │  │                      # Phase 5: propertyType, findUnitById()
+   │  │                      # Phase 6: prototypeUlpin + parentParcelId per unit
    │  ├─ SceneViewer.tsx     # <Canvas>: camera, lights, fog, OrbitControls
    │  │                      # Phase 5: the click-vs-orbit-drag decision
    │  ├─ Building.tsx        # one mesh per unit; Phase 5: click + hover + highlight
@@ -746,6 +1029,7 @@ interaction to the model that already existed.
    └─ ui/                    # HTML overlays and panels (added Phase 3)
       ├─ BuildingSummary.tsx # building dimensions + property-unit read-out
       └─ PropertyInspector.tsx # Phase 5: the selected unit's cadastral record
+                               # Phase 6: the prototype 3D ULPIN block, shown first
 ```
 
 Deliberately **not** included, to keep the foundation small: no ESLint config, no
@@ -796,7 +1080,6 @@ own values from it.
 src/
 ├─ types/                 # Parcel, Building, Floor, Unit, Ulpin3D
 ├─ data/                  # demo dataset + typed loaders
-├─ ulpin/                 # encode / decode / validate the 3D ULPIN
 ├─ map/                   # Leaflet components
 ├─ scene/                 # Three.js / R3F components
 └─ ui/                    # detail panel, controls, layout
@@ -826,7 +1109,7 @@ rather than shipping silently — Vite alone strips types without checking them.
 
 ---
 
-## 7. Why we are building incrementally
+## 8. Why we are building incrementally
 
 The build is split into small phases, and **each phase must leave the project runnable, documented and committed** before the next one starts.
 

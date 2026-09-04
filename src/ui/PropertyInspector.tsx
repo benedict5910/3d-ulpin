@@ -1,4 +1,5 @@
 import { getUnitCenter, type ApartmentUnit } from '../scene/unitLayout'
+import { PROTOTYPE_ENCODING_NOTE } from '../ulpin/parcelIdentity'
 
 /**
  * The property inspector: the cadastral record of whichever unit is selected.
@@ -42,7 +43,23 @@ function UnitRecord({ unit }: { unit: ApartmentUnit }) {
 
   return (
     <>
+      {/* The identifier block leads the panel and is the only element given
+          display weight: everything below it *describes* the property, this
+          *names* it. Note that both strings are read straight off the unit —
+          the inspector displays an identifier, it never builds one. */}
+      <section className="ulpin-block">
+        <h3 className="ulpin-label">Prototype 3D ULPIN</h3>
+        <p className="ulpin-value">{unit.prototypeUlpin}</p>
+        <p className="ulpin-note" role="note">
+          {PROTOTYPE_ENCODING_NOTE}
+        </p>
+      </section>
+
       <dl className="summary-list">
+        <div className="summary-row">
+          <dt>Parent parcel</dt>
+          <dd className="mono">{unit.parentParcelId}</dd>
+        </div>
         <div className="summary-row">
           <dt>Unit</dt>
           <dd>{unit.unitNumber}</dd>

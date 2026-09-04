@@ -4,7 +4,7 @@
 
 **Goal:** SIH prototype for 3D ULPIN and vertical property mapping — a demonstrable system that extends the flat, parcel-level ULPIN idea into three dimensions so that individual floors/units in a vertical building can each be identified, located and inspected.
 
-**Current phase:** Phase 5 – click selection + property inspector — **source complete, awaiting local verification, not committed**. Next: Phase 6 – prototype 3D ULPIN generator.
+**Current phase:** Phase 6 – prototype 3D ULPIN generator — **source complete, awaiting local verification, not committed**. Phase 5 is verified and committed. Next: Phase 7 – GIS parcel map.
 
 **Local repo path:** `C:\Users\Admin\Projects\3d-ulpin`
 
@@ -211,7 +211,7 @@ and confirms the dependency ranges in `package.json` resolve and are mutually co
 
 **What Phase 4 looks like in the browser** — as specified beforehand, and confirmed on the host: the same 18 × 14 × 15 m block as Phase 3, but now visibly built from **20 boxes** — four per floor, in a 2 × 2 arrangement, each 9 m wide and 7 m deep, with thin dark seams running both vertically (between floors) and along the two centre lines of the footprint. Adjacent boxes differ slightly in shade in every direction, and no box is brightly coloured. The top-left panel reads *5 floors · 3.0 m · 15.0 m · 18 × 14 m*, then *20 vertical units · 4 per floor (2 × 2) · 9 × 7 m · 63 m² · 189 m³*. Left-drag still orbits, scroll zooms, right-drag pans. Nothing responds to a click — that is Phase 5.
 
-## Completed — Phase 5 (click selection + property inspector) — *source complete, NOT yet verified on the host, NOT committed*
+## Completed — Phase 5 (click selection + property inspector) — *verified on the host and committed*
 
 - [x] **Selection state lifted to `App.tsx`** — `useState<string | null>(null)`. `App` is the nearest component containing both readers: the 3D scene (which draws the selected unit differently) and the inspector panel (which describes it). They are siblings — the scene lives inside `<Canvas>`, the panel is HTML over it — so nothing lower can serve both.
 - [x] **The selection is stored as an id, not as the unit object.** `selectedUnitId: string | null`, resolved back to the record by `findUnitById(units, selectedUnitId)`. Reasons recorded in `ARCHITECTURE.md` §5.1: a string compares cheaply inside the twenty-mesh render loop; a stale id resolves to `null` and returns the panel to its empty state, whereas a stale *object* would keep pointing at a unit the scene no longer draws; and it stays one copy of the data instead of two. The id is the question, the `units` array is the answer.
@@ -250,7 +250,7 @@ and confirms the dependency ranges in `package.json` resolve and are mutually co
 
 Untouched: `src/scene/buildingConfig.ts`, `Ground.tsx`, `main.tsx`, `vite-env.d.ts`, `index.html`, `package.json`, `package-lock.json`, `tsconfig.json`, `vite.config.ts`, `.gitignore`. **No new dependencies were added in Phase 5.**
 
-## Local verification REQUIRED — Phase 5
+## Local verification — Phase 5 (completed on the host, 2026-09-04)
 
 **Not yet run. Phase 5 is not complete until these pass on the Windows host.**
 
@@ -290,7 +290,7 @@ Done before hand-off; **it does not replace the host run above.**
 
 ## Git checkpoint — Phase 5
 
-**None. Phase 5 is deliberately not committed** — the developer commits after verifying on the host. The last commit remains `Phase 4: subdivide floors into 3D property units`.
+**Committed and pushed** as `Phase 5: add unit selection and property inspector`, after the developer verified it on the Windows host on 2026-09-04 — the project's second recoverable checkpoint.
 
 ## Commands to run locally
 
@@ -304,38 +304,159 @@ npm run preview      # serve the built dist/ locally, to check the production ou
 npm run typecheck    # type-check only, no bundle
 ```
 
+## Completed — Phase 6 (prototype 3D ULPIN generator) — *source complete, NOT yet verified on the host, NOT committed*
+
+Every vertical property unit now carries a deterministic, unique, human-readable
+identifier, generated at the data layer alongside its geometry and displayed as
+the headline field of the property inspector.
+
+```
+KA - BLR - 0482 - 001928 - F03 - U02
+│    │     │      │        │     └─ unit index on that floor (1-based, zero-padded)
+│    │     │      │        └─────── floor level (1-based, zero-padded)
+│    │     │      └──────────────── parent land-parcel number
+│    │     └─────────────────────── spatial / zone code
+│    └───────────────────────────── city / district demo code
+└────────────────────────────────── state code
+```
+
+> **This is a prototype encoding scheme for the SIH demonstration. It is NOT the
+> official Government of India ULPIN format.** Every place the identifier is
+> shown carries the label *"Prototype encoding – demonstration only"*.
+
+What was built:
+
+- **`ParcelIdentity`** — a typed, four-field structure (`stateCode`, `cityCode`,
+  `zoneCode`, `parcelNumber`), with `DEMO_PARCEL_IDENTITY` fixed at
+  `KA` / `BLR` / `0482` / `001928`. All fields are strings, because `0482` and
+  `001928` carry meaningful leading zeros that a number would eat.
+- **`generatePrototype3DULPIN(parcel, floorLevel, unitIndex)`** — pure and
+  deterministic. Validates that floor and index are 1-based positive integers,
+  zero-pads each to two digits, and joins the segments.
+- **Two new fields on `ApartmentUnit`**: `prototypeUlpin` and `parentParcelId`,
+  both generated inside `buildApartmentUnits` in the same loop iteration that
+  computes the unit's bounds — so the name and the volume it names come from one
+  pass over one set of inputs.
+- **`assertUniqueIdentifiers`** runs over all twenty identifiers before
+  `buildApartmentUnits` returns, and **throws** on any duplicate. A duplicate
+  would be invisible in the UI (each panel would look correct on its own), so
+  the failure is fatal at generation time rather than a warning.
+- **A pure self-check** (`checkPrototypeUlpin`) covering the three specified
+  known-answer cases and uniqueness. `App` runs it under `import.meta.env.DEV`,
+  so it fires on every dev reload and is stripped from the production bundle.
+- **The inspector** shows the identifier first, in a tinted accent card with a
+  monospace value, then `Parent parcel`, then all the Phase 5 fields unchanged.
+
+**Apartment number is not the unit index.** `unitNumber` (`"302"`) is a door
+label; `indexOnFloor` (`2`) is the ordinal position on the floor and is what
+feeds the `U` segment. The identifier is never derived by parsing the door
+label — real buildings use `3A`, skip 13 and restart per wing, all of which
+would silently produce a well-formed identifier for the wrong property. Phase 6
+did **not** add a parallel `unitIndexWithinFloor` field: `indexOnFloor` already
+carries that value reliably, and two fields meaning one thing is the drift this
+model avoids everywhere else.
+
+## Files changed in Phase 6
+
+| File | Change |
+|---|---|
+| `src/ulpin/parcelIdentity.ts` | **new** — `ParcelIdentity`, `DEMO_PARCEL_IDENTITY`, `formatParentParcelId()`, `PROTOTYPE_ENCODING_NOTE` |
+| `src/ulpin/generateUlpin.ts` | **new** — `generatePrototype3DULPIN()`, zero padding, `findDuplicateIdentifiers()`, `assertUniqueIdentifiers()` |
+| `src/ulpin/ulpinSelfCheck.ts` | **new** — `checkPrototypeUlpin()` (pure) and `runPrototypeUlpinSelfCheck()` (dev-only runner) |
+| `src/scene/unitLayout.ts` | `ApartmentUnit` gains `prototypeUlpin` + `parentParcelId`; `buildApartmentUnits` gains a `parcel` parameter (defaulting to the demo parcel) and asserts uniqueness before returning |
+| `src/ui/PropertyInspector.tsx` | leading identifier block + disclaimer, plus a `Parent parcel` row; every Phase 5 field retained |
+| `src/index.css` | `.ulpin-block` / `.ulpin-label` / `.ulpin-value` / `.ulpin-note` / `dd.mono`; inspector widened 246px → 274px so the 26-character identifier sits on one line |
+| `src/App.tsx` | runs the self-check on the generated units under `import.meta.env.DEV` |
+| `ARCHITECTURE.md` | new §6 (format, parcel identity, generator, generation flow, apartment number vs unit index, uniqueness, zero padding, self-check, display); old §6/§7 renumbered to §7/§8; repo tree updated |
+| `PROJECT_STATUS.md` | this section |
+
+No new dependencies. No file was deleted. `SceneViewer.tsx`, `Building.tsx`,
+`Ground.tsx`, `BuildingSummary.tsx` and `buildingConfig.ts` were **not touched**
+— selection, hover, highlight, orbit and the drag threshold are exactly as
+Phase 5 left them.
+
+## Local verification REQUIRED — Phase 6
+
+Nothing below has run on the Windows host. Run from `C:\Users\Admin\Projects\3d-ulpin`:
+
+1. `npm run build` — must pass. `tsc --noEmit` runs first, so this is the real
+   type gate for the two new `ApartmentUnit` fields and the new `parcel`
+   parameter.
+2. `npm run dev`, open <http://localhost:5173>.
+3. **Console on load:** exactly one line —
+   `[3D ULPIN] self-check passed (4 checks) — prototype encoding, demonstration only`.
+   No errors. If the self-check throws, the app will not render — that is the
+   intended behaviour, and the error message names the failing case.
+4. Click **unit 302** (third floor, second unit — front-right on the middle
+   floor). The inspector must show:
+   - **Prototype 3D ULPIN** `KA-BLR-0482-001928-F03-U02` — largest, monospace,
+     in the accent card at the top of the panel
+   - *Prototype encoding – demonstration only* directly beneath it
+   - **Parent parcel** `KA-BLR-0482-001928`
+   - Unit `302`, Floor `3`, Residential, 63 m², 189 m³, 6.0–9.0 m, and the
+     Phase 5 bounds and centroid, all unchanged
+5. Click the **ground-floor front-left** unit → `…-F01-U01`. Click the
+   **top-floor back-right** unit → `…-F05-U04`.
+6. Confirm the identifier is **not clipped or wrapped** at the panel's width.
+7. **Regression — Phase 5 must still work:** selecting a second unit replaces
+   the first; clicking empty space clears the panel; a drag that starts on a
+   unit orbits without selecting; hover still reads differently from selection.
+8. `npm run preview` after the build — the panel looks identical, and the
+   console self-check line is **absent** (it is dev-only).
+
+## Verified in the cloud sandbox — Phase 6 (pure logic only)
+
+The identifier modules import no React and no Three.js, so they were executed
+directly in Node against the real `buildApartmentUnits`:
+
+- 20 units generated, **20 distinct identifiers**, no duplicates.
+- Known answers: floor 1 / index 1 → `KA-BLR-0482-001928-F01-U01`; floor 3 /
+  index 2 → `KA-BLR-0482-001928-F03-U02`; floor 5 / index 4 →
+  `KA-BLR-0482-001928-F05-U04`. All three **PASS**.
+- Unit `302` carries `parentParcelId` `KA-BLR-0482-001928` and `prototypeUlpin`
+  `KA-BLR-0482-001928-F03-U02`.
+- Padding beyond the demo: floor 12 / index 3 → `…-F12-U03`.
+- Rejected as expected: floor `0`, `-1`, `2.5` and `NaN` each throw
+  `floorLevel must be a positive integer (1-based)`.
+
+This covers the project's own logic. It does **not** cover JSX, the CSS, or the
+React/R3F type signatures — `npm run build` on the host remains the real gate.
+
+## Git checkpoint — Phase 6
+
+**None. Phase 6 is deliberately not committed** — the developer commits after
+verifying on the host, as with every previous phase.
+
 ## Next phase
 
-**Phase 6 – prototype 3D ULPIN generator.** *Do not start before Phase 5 is
-verified on the host and committed.*
+**Phase 7 – GIS parcel map.** *Do not start before Phase 6 is verified on the
+host and committed.*
 
-The identifier format has been decided:
-
-```
-KA-BLR-0482-001928-F03-U02
-│  │   │    │      │   └─ unit on that floor, zero-padded
-│  │   │    │      └───── floor, zero-padded — the vertical component
-│  │   │    └──────────── parcel / property number
-│  │   └───────────────── ward or survey block
-│  └───────────────────── city / district
-└──────────────────────── state
-```
+The identifier now names a vertical property but nothing yet shows *where on the
+ground* the parent parcel is. Phase 7 puts the 2D parcel on a map beside the 3D
+building, so `KA-BLR-0482-001928` stops being four codes and becomes a shape.
 
 Expected scope:
 
-1. A `ulpin/` module that **encodes** those parts into the string, and decodes
-   it back — kept separate from the scene, because the identifier is the actual
-   subject of the project rather than a rendering detail.
-2. The parcel-level fields (`KA-BLR-0482-001928`) come from configuration; the
-   `F` and `U` segments are derived from the unit's own `floorLevel` and
-   `indexOnFloor`, which already exist on `ApartmentUnit`.
-3. The generated identifier surfaces in the **existing** `PropertyInspector`,
-   as one more field read off the selected unit — the panel built in Phase 5
-   should need no structural change.
-4. Round-trip validation: `decode(encode(unit))` returns the parts it started
-   with, and a malformed string is rejected rather than silently parsed.
-5. Still no GIS, no backend, no topology validation, no AI.
+1. A `map/` module with a Leaflet map showing the demo parcel `001928` as a
+   polygon on its zone, rendered from typed data — the same "structured data in,
+   view out" rule the 3D scene follows.
+2. Parcel geometry as demo data, in a `data/` module, kept separate from
+   `ParcelIdentity`: the identity says *which* parcel, the geometry says *where*.
+3. The map and the 3D scene read the **same** parcel identity, so the map's
+   selected parcel and the building's `parentParcelId` are provably one thing.
+4. A visible link between the two views: selecting the parcel highlights the
+   building it carries, and the inspector's `Parent parcel` row is where the two
+   halves meet.
+5. Still no backend, no topology validation, no ownership simulation, no AI.
 6. Confirm it renders in dev **and** survives `npm run build`.
+
+Deferred, and deliberately not part of Phase 7 either: a **decoder** for the
+prototype identifier (`decode(encode(x)) === x`, malformed strings rejected).
+Phase 6 did not write one because nothing yet reads an identifier back apart,
+and a parser written before it has a caller is a parser written against a guess.
+It becomes worth building the moment an identifier arrives from outside the app
+— a URL, a pasted search box, an imported dataset.
 
 ## Known issues
 
@@ -347,8 +468,13 @@ Expected scope:
 - ~~**Vercel is not wired up.**~~ **Not an issue — it was already configured.** GitHub → Vercel is connected and <https://3d-ulpin-three.vercel.app> is live; the pipeline has been observed serving the repo's pushed state.
 - **The 0.06 m visual gap is cosmetic and must stay that way.** It is subtracted from each unit box's geometry size symmetrically, in all three axes, so it never moves a mesh centre. If a later phase needs real slab thickness, wall thickness or floor-to-ceiling clearance, that belongs in `BuildingConfig` as its own field, not in the visual constant.
 - **The unit grid is uniform by assumption.** Every floor is cut the same way and every unit is identical, which is why the summary panel can describe all 20 from `units[0]`. Real buildings have differently sized flats and floors that differ from each other; when that arrives, `buildApartmentUnits` needs a per-floor partition rather than one grid, and the panel needs a range rather than a single figure.
-- **Unit numbering assumes fewer than 100 units per floor.** `unitNumber` is `floorLevel` + a 2-digit index, so floor 1 unit 100 would collide with floor 11 unit 0. Fine for the prototype; worth noting before the ULPIN format is fixed.
-- **Phase 5 is unverified and uncommitted.** The source is complete but has never run on the host — see *Local verification REQUIRED — Phase 5* above. The sandbox check covers the project's own code, not the R3F/drei type signatures, so `npm run build` on the host is the real gate.
+- **Unit numbering assumes fewer than 100 units per floor.** `unitNumber` is `floorLevel` + a 2-digit index, so floor 1 unit 100 would collide with floor 11 unit 0. This affects the *door label only* — as of Phase 6 the prototype 3D ULPIN is built from `floorLevel` and `indexOnFloor` as separate padded segments, so it cannot collide this way.
+- ~~**Phase 5 is unverified and uncommitted.**~~ **Closed.** Verified on the host and committed on 2026-09-04.
+- **Phase 6 is unverified and uncommitted.** The source is complete but has never run on the host — see *Local verification REQUIRED — Phase 6* above. The sandbox check covers the pure identifier logic only, not JSX, CSS or the R3F/drei type signatures, so `npm run build` on the host is the real gate.
+- **The identifier is a prototype encoding, not an official format.** `KA-BLR-0482-001928-F03-U02` was invented for this demonstration and must never be presented as the Government of India ULPIN format. The disclaimer constant `PROTOTYPE_ENCODING_NOTE` is rendered with the identifier; if the identifier is ever shown somewhere new, the disclaimer goes with it.
+- **The parcel identity is a single hard-coded demo constant.** One building on one parcel. `buildApartmentUnits` already takes the parcel as a parameter, so a second parcel is a caller change, not a generator change — but nothing yet supplies one, and there is no check that two buildings on *different* parcels do not reuse a parcel number.
+- **Zero padding is fixed at two digits.** 99 floors and 99 units per floor fit; a 100th does not break the identifier but makes that one string wider than its siblings, so fixed-offset slicing of the text would stop working. Nothing slices it today.
+- **No decoder.** Identifiers can be generated but not parsed back into parts. Not needed yet — nothing reads one from outside the app. See *Next phase*.
 - **The drag threshold is a heuristic.** `DRAG_TOLERANCE_PX = 5` decides whether a gesture was a click or an orbit. If a click ever feels unresponsive, or a small drag selects something, that constant in `SceneViewer.tsx` is the dial. A touch device may want a larger value.
 - **`propertyType` is uniform.** Every generated unit is `'Residential'`, set from one constant. The `PropertyType` union already admits `Commercial` / `Parking` / `Common`, so varying it is a change to the generator — but nothing yet reads it as anything but a label.
 - ~~**The 3D ULPIN identifier format is still undecided.**~~ **Closed.** Decided as `KA-BLR-0482-001928-F03-U02` — state, city/district, ward, parcel, floor, unit. The encoder is Phase 6; see *Next phase*.

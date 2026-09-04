@@ -87,7 +87,9 @@ body {
   position: absolute;
   top: 16px;
   right: 16px;
-  width: 246px;
+  /* Widened in Phase 6 from 246px: the 26-character identifier is the panel's
+     headline value and should sit on one line at its display size. */
+  width: 274px;
   padding: 14px 16px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -96,6 +98,55 @@ body {
   /* Read-only, and it overlaps the canvas — so it must not swallow orbit
      drags that happen to pass under it. */
   pointer-events: none;
+}
+
+/* The prototype 3D ULPIN block — deliberately the loudest thing in the panel.
+   Prominence is carried by four cheap signals at once: a tinted inset card,
+   a left accent rule, a larger monospace value, and the only non-muted
+   letter-spaced label in the inspector. */
+.ulpin-block {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid rgba(74, 222, 128, 0.34);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  background: rgba(74, 222, 128, 0.08);
+}
+
+.ulpin-label {
+  margin: 0;
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.ulpin-value {
+  margin: 6px 0 0;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1.35;
+  /* The identifier must never be silently clipped or re-wrapped mid-segment. */
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+
+/* The disclaimer. Small, but always present wherever the identifier is. */
+.ulpin-note {
+  margin: 6px 0 0;
+  font-size: 0.6875rem;
+  font-style: italic;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+/* Parent parcel: same family as the identifier, none of its weight. */
+.summary-row dd.mono {
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 0.75rem;
 }
 
 .inspector-empty {
