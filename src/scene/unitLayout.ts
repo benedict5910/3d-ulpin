@@ -19,6 +19,27 @@ import {
 } from './buildingConfig'
 
 /**
+ * What a unit is used for, in cadastral terms.
+ *
+ * A union rather than a bare `string` so that the day a floor holds shops or a
+ * parking deck, the compiler points at every place that has to cope. The
+ * prototype building is entirely residential, so only one member is in use; the
+ * others are declared because the *model* admits them, not because the renderer
+ * does.
+ */
+export type PropertyType = 'Residential' | 'Commercial' | 'Parking' | 'Common'
+
+/**
+ * The use assigned to every generated unit in the prototype.
+ *
+ * It lives here, next to the generator, rather than in the inspector panel: the
+ * panel must *read* a unit's property type, never decide it. When Phase 6+ gives
+ * different floors different uses, this constant becomes a lookup and no UI file
+ * changes.
+ */
+const DEFAULT_PROPERTY_TYPE: PropertyType = 'Residential'
+
+/**
  * One vertical property unit — an apartment — as an axis-aligned box in metres.
  *
  * The box is stored as **six bounds**, not as a centre plus a size. Bounds are
@@ -39,6 +60,8 @@ export interface ApartmentUnit {
   readonly indexOnFloor: number
   /** Human-facing door number: floor 3, unit 1 reads `301`. */
   readonly unitNumber: string
+  /** Cadastral use of the unit. Every unit in this prototype is `Residential`. */
+  readonly propertyType: PropertyType
 
   /** 0-based grid column along X. Kept so neighbours are cheap to reason about. */
   readonly column: number
@@ -128,6 +151,7 @@ function buildUnitsForFloor(
         floorLevel: floor.level,
         indexOnFloor,
         unitNumber: formatUnitNumber(floor.level, indexOnFloor),
+        propertyType: DEFAULT_PROPERTY_TYPE,
 
         column,
         row,
@@ -192,4 +216,24 @@ export function getUnitCenter(unit: ApartmentUnit): [number, number, number] {
     (unit.yMin + unit.yMax) / 2,
     (unit.zMin + unit.zMax) / 2,
   ]
+}
+
+/**
+ * Resolve a unit id back to the generated unit it names.
+ *
+ * This is the whole reason selection can be stored as a bare string. The app
+ * remembers *which* unit is selected (`"unit-302"`); this function turns that
+ * answer back into the one authoritative `ApartmentUnit` object the scene is
+ * already rendering, so the inspector and the geometry are looking at literally
+ * the same record rather than at two copies that agree today.
+ *
+ * Returns `null` for `null` and for an id that no longer exists — which is what
+ * makes a stale selection harmless if the config ever changes under it.
+ */
+export function findUnitById(
+  units: ApartmentUnit[],
+  unitId: string | null,
+): ApartmentUnit | null {
+  if (unitId === null) return null
+  return units.find((unit) => unit.id === unitId) ?? null
 }

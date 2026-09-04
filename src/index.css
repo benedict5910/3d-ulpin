@@ -80,6 +80,31 @@ body {
   pointer-events: none;
 }
 
+/* Property inspector — the mirror of the summary, on the right-hand side.
+   Same visual language deliberately: this is a second read-out of the same
+   model, not a different kind of thing. */
+.property-inspector {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 246px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  backdrop-filter: blur(6px);
+  /* Read-only, and it overlaps the canvas — so it must not swallow orbit
+     drags that happen to pass under it. */
+  pointer-events: none;
+}
+
+.inspector-empty {
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
 .summary-title {
   margin: 0 0 10px;
   font-size: 0.6875rem;

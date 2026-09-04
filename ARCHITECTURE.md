@@ -456,9 +456,270 @@ label.
 
 ---
 
-## 5. Repository shape
+## 5. Selection and the property inspector (Phase 5)
 
-### As built (Phases 1–4 — this exists now)
+Phases 3 and 4 built a model and drew it. Phase 5 is the first phase where the
+app has to answer a question about *what the user is looking at*: which of the
+twenty property units is currently under inspection. That is the "state layer"
+from §1 appearing for the first time, and it is small enough to describe
+completely.
+
+### 5.1 Where the selection lives, and what is stored
+
+```tsx
+// src/App.tsx
+const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null)
+```
+
+**Which component owns it.** `App`. The two things that care about the selection
+are the 3D scene (which must draw one unit differently) and the property
+inspector (which must describe it). Those are siblings: the scene is inside a
+`<Canvas>`, the inspector is HTML positioned over it. The nearest component that
+contains both is `App`, so that is where the state goes — the standard "lift
+state to the closest common ancestor" rule. Anything lower cannot serve both;
+anything higher only adds distance.
+
+Hover state is the counter-example and is deliberately *not* lifted. Nothing
+outside the 3D scene reacts to hover, so it stays local to `Building`:
+
+```tsx
+// src/scene/Building.tsx
+const [hoveredUnitId, setHoveredUnitId] = useState<string | null>(null)
+```
+
+The rule the project follows: **state rises exactly as far as its readers, and
+no further.**
+
+**Why an id and not the unit object.** `selectedUnitId` is a `string | null`.
+The obvious alternative — `useState<ApartmentUnit | null>` — would work today,
+and it is worth being explicit about why it was rejected:
+
+| | `selectedUnitId: string \| null` | `selectedUnit: ApartmentUnit \| null` |
+|---|---|---|
+| What state means | *which* unit is selected | *a copy of* the selected unit |
+| Comparison | `unit.id === selectedUnitId` — a string compare each mesh can do for itself | reference equality, which silently breaks if the array is ever rebuilt |
+| If the config changes | the id either resolves or resolves to `null`, and the panel returns to its empty state | the reference survives as a unit the scene no longer draws — a selection of something invisible |
+| Copies of the data | one: the generated `units` array | two: the array, plus whatever React is holding |
+| Serialising it later (a URL, a saved view, a shared link) | it is already a string | needs flattening to an id anyway |
+
+The id is the **question**; the generated `units` array remains the only place
+with the **answer**. Turning one into the other is a single function:
+
+```ts
+// src/scene/unitLayout.ts
+export function findUnitById(units: ApartmentUnit[], unitId: string | null): ApartmentUnit | null
+```
+
+`App` calls it and hands the result to the inspector. The panel therefore
+receives *the* unit — the identical object the mesh was positioned from — not a
+description of it.
+
+### 5.2 How React Three Fiber pointer events work
+
+A WebGL canvas is **one DOM element**. The browser sees a rectangle of pixels;
+it has no idea there are twenty boxes inside it, so it cannot fire a `click` on
+"unit 302" the way it would on a `<button>`. Something has to translate a 2D
+pointer position into a 3D answer. That something is **raycasting**, and R3F
+runs it for us.
+
+```
+ pointer at (x, y) on the canvas
+            │
+            ▼
+ normalise to [-1, 1] in both axes      ← where in the viewport, camera-independent
+            │
+            ▼
+ camera.setFromCamera(ndc, camera)      ← build a ray: origin at the camera,
+            │                              direction through that pixel
+            ▼
+ raycaster.intersectObjects(interactive) ← test the ray against every mesh that
+            │                              has a pointer handler attached
+            ▼
+ hits, sorted nearest-first             ← each hit carries the object, the
+            │                              distance, the point, the face
+            ▼
+ R3F calls that mesh's onClick / onPointerOver / onPointerOut
+```
+
+Three consequences shape the code:
+
+1. **The ray does not stop at the first box it hits.** It passes straight
+   through and reports every unit along its path, front to back, and R3F calls
+   the handler on each in turn. That is why the click handler starts with
+   `event.stopPropagation()` — without it, clicking the front of the building
+   would also "click" the units behind it, and the last one to run would win.
+   The same applies to `onPointerOver`, or four units would think they were
+   hovered at once.
+2. **Only meshes with handlers are candidates.** R3F raycasts the objects it
+   knows are interactive. `Ground` has no handlers, so it is not in the set —
+   which is what makes `onPointerMissed` (below) fire when the user clicks the
+   ground or the sky.
+3. **The handler receives a normal React-style event object**, extended with the
+   3D hit information. `event.clientX` is still there, alongside `event.object`,
+   `event.distance` and `event.point`. That matters for the drag test.
+
+### 5.3 The event flow, end to end
+
+```
+  user clicks a box in the viewport
+            │
+            ▼
+  R3F raycasts and calls  <mesh onClick>            src/scene/Building.tsx
+            │  onUnitClick(unit.id, event)
+            ▼
+  handleUnitClick                                   src/scene/SceneViewer.tsx
+    · event.stopPropagation()  → front-most unit only
+    · isClickNotDrag(event)?   → was this a click, or the end of an orbit drag?
+            │  onSelectUnit(unitId)
+            ▼
+  setSelectedUnitId(unitId)                         src/App.tsx   ← React state
+            │
+            ├──────────────► SceneViewer → Building
+            │                 · selected mesh turns amber + emissive
+            │                 · a wireframe cage is drawn on its true bounds
+            │
+            └── findUnitById(units, selectedUnitId)
+                       │  selectedUnit: ApartmentUnit | null
+                       ▼
+                 PropertyInspector                  src/ui/PropertyInspector.tsx
+                   ordinary HTML: unit number, floor, type, area,
+                   volume, elevation range, 3D bounds, centroid
+```
+
+Nothing in that chain reaches sideways. `Building` does not know a panel exists;
+it reports *"unit 302 was clicked"* upward and re-reads `selectedUnitId`
+downward. `PropertyInspector` does not know a canvas exists; it imports no
+Three.js and receives one object. The only thing they share is `App`'s state and
+the `units` array — which is the point.
+
+### 5.4 Clicks versus orbit drags
+
+OrbitControls and unit picking share one pointer, and the browser fires a
+`click` at the end of a camera drag exactly as it does at the end of a tap. Left
+alone, every rotation that happened to begin on a unit would also select it.
+
+The fix is a distance threshold, owned by `SceneViewer` because that is the
+component that holds both the meshes and the controls:
+
+```tsx
+const DRAG_TOLERANCE_PX = 5
+
+const pointerDownAt = useRef<{ x: number; y: number } | null>(null)   // a ref, not state:
+                                                                     // read during events,
+                                                                     // must never re-render
+
+const isClickNotDrag = (event: { clientX: number; clientY: number }) => {
+  const start = pointerDownAt.current
+  if (start === null) return true
+  return Math.hypot(event.clientX - start.x, event.clientY - start.y) <= DRAG_TOLERANCE_PX
+}
+```
+
+`onPointerDown` on the `<Canvas>` records where the press started; the click
+handler measures how far the pointer travelled. Five pixels absorbs the tremor
+in a real click without letting a deliberate drag through. OrbitControls itself
+is untouched — it listens on the canvas element directly, while picking comes
+from R3F's raycaster, so the two never compete for a listener, only for the same
+gesture, and the threshold is what settles that.
+
+The same test guards `onPointerMissed`, R3F's "the click hit nothing" callback,
+which clears the selection when the user clicks the sky or the ground — but not
+when they merely finish an orbit over empty space.
+
+Both HTML overlays are `pointer-events: none`, so a drag that passes under the
+summary or the inspector still reaches the canvas.
+
+### 5.5 Why the inspector reads the same data the geometry does
+
+This is the design decision the phase turns on.
+
+The tempting shortcut is to give the panel its own description of the selected
+unit — a small object assembled at click time, or a lookup in a table of unit
+metadata kept alongside the geometry. Both create a **second source of truth**,
+and second sources of truth fail in a specific, quiet way: the two descriptions
+agree on the day they are written and drift apart afterwards. The scene would
+draw a box from 6 m to 9 m while the panel reported 6.5 m to 9.5 m, and nothing
+would error — the picture and the record would simply disagree, which for a
+*cadastre* is the one failure that matters. A land registry whose map and whose
+register disagree is not a registry.
+
+So the app is arranged so the situation cannot arise:
+
+```
+DEFAULT_BUILDING_CONFIG
+        │  buildApartmentUnits()            ← called once, in App
+        ▼
+   units: ApartmentUnit[]  ─────────┬──────────────► Building   (positions meshes)
+        │                           └──────────────► BuildingSummary
+        │                                                 (counts and per-unit figures)
+        │  findUnitById(units, selectedUnitId)
+        ▼
+   selectedUnit  ───────────────────────────────────► PropertyInspector
+                                                          (reads its fields)
+```
+
+Concretely:
+
+- The units are generated **once**, in `App`, and passed down. Before Phase 5,
+  `Building` and `BuildingSummary` each called `buildApartmentUnits` themselves.
+  The numbers were never going to disagree — same pure function, same input —
+  but the arrays were separate objects, and selection makes object identity
+  meaningful. One array is also simply easier to reason about than two that
+  happen to match.
+- The inspector holds **no geometry state of its own**. Bounds are read
+  straight off the unit. The centroid is computed with `getUnitCenter(unit)` —
+  the same function `Building` uses to place the mesh, so the point the panel
+  names is by construction the point the box is centred on. It is derived in
+  both places, stored in neither.
+- Property metadata lives on the **same record** as the geometry.
+  `propertyType` was added to `ApartmentUnit` and set by the generator, so the
+  panel *reads* a unit's use rather than deciding it. When later phases give
+  different floors different uses, one generator changes and no UI file does.
+- The area and volume shown are the `areaSqM` and `volumeCubicM` computed in
+  Phase 4 from the bounds. The panel does no arithmetic beyond formatting.
+
+The general principle, and the reason it is worth the small amount of plumbing:
+**a fact is computed once, at the point it is defined, and everything else asks
+for it.** `ApartmentUnit` is where a unit is defined. The mesh is a picture of
+one; the inspector is a read-out of one; neither is a second copy.
+
+### 5.6 What "selected" looks like
+
+Colour was held in reserve through Phases 3 and 4 for exactly this. The resting
+palette is two near-identical slate blues; selection spends the one hue that is
+obviously not part of a neutral building palette:
+
+| State | Appearance | Why |
+|---|---|---|
+| Rest | `#5b7286` / `#4d6376`, no emissive | quiet enough that one highlighted unit is unmissable |
+| Hover | resting colour, faint cool emissive (`#22384d`, 0.5) + pointer cursor | an affordance, not an answer — it says "clickable", not "selected" |
+| Selected | amber `#d99b3f`, warm emissive (`#6b4310`, 0.55), plus a wireframe cage on the unit's true bounds | a hue change *and* an outline: two channels, so it cannot be confused with hover |
+
+Hover and selection are deliberately different *kinds* of change — hover
+brightens, selection changes hue and adds an edge — so hovering a unit while
+another is selected can never make the hovered one read as selected. A selected
+unit also ignores hover styling entirely.
+
+The cage is a `lineSegments` built from `EdgesGeometry`, drawn at the unit's
+**full** bounds rather than the shrunk visual box, so it sits a few centimetres
+proud of the mesh and reads as a crisp edge instead of z-fighting.
+`EdgesGeometry` keeps only the twelve real edges of the box; a `wireframe`
+material would also draw each face's triangulation diagonal, which looks like a
+rendering fault rather than a selection.
+
+### 5.7 What Phase 5 deliberately does not do
+
+No ULPIN generation (Phase 6 — the format is decided, the encoder is not
+written), no GIS, no topology validation, no ownership-conflict simulation, no
+AI, no backend, no basement, no exploded view. The scene, the camera, the
+lighting, the ground and the building's dimensions are unchanged; Phase 5 adds
+interaction to the model that already existed.
+
+---
+
+## 6. Repository shape
+
+### As built (Phases 1–5 — this exists now)
 
 ```
 3d-ulpin/
@@ -471,17 +732,20 @@ label.
 ├─ vite.config.ts            # Vite config; enables the React plugin
 └─ src/
    ├─ main.tsx               # entry point: mounts <App> into #root
-   ├─ App.tsx                # page shell: header, viewer (+ overlay), footer
+   ├─ App.tsx                # page shell + Phase 5: owns the units array and the selection
    ├─ index.css              # dark theme; global styles
    ├─ vite-env.d.ts          # tells TypeScript about Vite-specific imports (e.g. CSS)
    ├─ scene/                 # everything 3D (added Phase 2)
    │  ├─ buildingConfig.ts   # Phase 3: the config type, floor maths, total height
    │  ├─ unitLayout.ts       # Phase 4: ApartmentUnit, the 2 x 2 subdivision, centres
+   │  │                      # Phase 5: propertyType, findUnitById()
    │  ├─ SceneViewer.tsx     # <Canvas>: camera, lights, fog, OrbitControls
-   │  ├─ Building.tsx        # Phase 4: generates one mesh per property unit
+   │  │                      # Phase 5: the click-vs-orbit-drag decision
+   │  ├─ Building.tsx        # one mesh per unit; Phase 5: click + hover + highlight
    │  └─ Ground.tsx          # ground plane + 1 m reference grid
    └─ ui/                    # HTML overlays and panels (added Phase 3)
-      └─ BuildingSummary.tsx # building dimensions + property-unit read-out
+      ├─ BuildingSummary.tsx # building dimensions + property-unit read-out
+      └─ PropertyInspector.tsx # Phase 5: the selected unit's cadastral record
 ```
 
 Deliberately **not** included, to keep the foundation small: no ESLint config, no
@@ -497,6 +761,20 @@ constants. Phase 4 proved it again at a smaller cost: subdividing every floor
 added one data module and rewrote one component's render body, and
 `SceneViewer.tsx` and `Ground.tsx` were not touched at all — the building's
 outer envelope did not change, only what it is made of.
+
+Phase 5 is the first phase to cross the seam, and it shows where the seam
+actually is. `SceneViewer` gained the click-versus-drag decision, because that
+is an argument between the *camera controls* and the *contents* and it belongs
+to whoever owns both. `Building` gained pointer handlers and two extra material
+states. `ui/` gained a panel that imports no Three.js at all. What did **not**
+happen is the interesting part: no 3D code learned that a panel exists, and the
+panel learned nothing about meshes or rays. They meet only at `App`, over one
+array and one string.
+
+**Why `PropertyInspector` lives in `ui/`, not `scene/`.** Same reason as
+`BuildingSummary`: it is HTML positioned over the canvas, not a 3D object. It
+receives an `ApartmentUnit` — a plain data record with no Three.js in it — which
+is exactly why `unitLayout.ts` was kept free of the renderer in Phase 4.
 
 **Why the unit maths is a second module, not more of `buildingConfig.ts`.**
 The config describes *the building* — six numbers an architect would give you.
@@ -536,7 +814,7 @@ their only consumer; moving them early would be structure without a reason.
 | `react`, `react-dom` | `^19.1.0` | UI library and its browser renderer |
 | `three` | `^0.180.0` | the 3D engine (WebGL) |
 | `@react-three/fiber` | `^9.0.0` | React renderer for Three.js |
-| `@react-three/drei` | `^10.0.0` | R3F helpers; only `OrbitControls` is used so far |
+| `@react-three/drei` | `^10.0.0` | R3F helpers; only `OrbitControls` is used so far — the Phase 5 selection outline is plain Three.js (`EdgesGeometry`), not a drei helper |
 | `@types/three` | `^0.180.0` | type definitions for Three.js |
 | `vite` | `^7.0.0` | dev server and production bundler |
 | `@vitejs/plugin-react` | `^5.0.0` | teaches Vite to compile JSX and enable fast refresh |
@@ -548,7 +826,7 @@ rather than shipping silently — Vite alone strips types without checking them.
 
 ---
 
-## 6. Why we are building incrementally
+## 7. Why we are building incrementally
 
 The build is split into small phases, and **each phase must leave the project runnable, documented and committed** before the next one starts.
 

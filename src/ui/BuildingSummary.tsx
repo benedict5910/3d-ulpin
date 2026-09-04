@@ -1,10 +1,9 @@
 import {
-  DEFAULT_BUILDING_CONFIG,
   getTotalHeight,
   getUnitsPerFloor,
   type BuildingConfig,
 } from '../scene/buildingConfig'
-import { buildApartmentUnits } from '../scene/unitLayout'
+import type { ApartmentUnit } from '../scene/unitLayout'
 
 /**
  * A small read-out of the building and its property units, overlaid on the viewer.
@@ -14,18 +13,23 @@ import { buildApartmentUnits } from '../scene/unitLayout'
  * `ApartmentUnit[]` the scene renders** — nothing here is typed in by hand. If
  * the config says eight floors of six units, the scene shows 48 boxes and this
  * panel says 48 units, with no third place to keep in step.
+ *
+ * Phase 5 tightened that from "the same generator" to "the same array": the
+ * units are now built once in `App` and passed in, rather than regenerated
+ * here. The numbers were never going to disagree, but selection made object
+ * identity meaningful, and one array is simpler to reason about than two that
+ * happen to match.
  */
 
 interface BuildingSummaryProps {
-  config?: BuildingConfig
+  /** The building being described. */
+  config: BuildingConfig
+  /** The generated units, as rendered by the scene. */
+  units: ApartmentUnit[]
 }
 
-function BuildingSummary({ config = DEFAULT_BUILDING_CONFIG }: BuildingSummaryProps) {
+function BuildingSummary({ config, units }: BuildingSummaryProps) {
   const totalHeight = getTotalHeight(config)
-
-  // The same generator the scene uses. The panel describes the geometry by
-  // measuring it, not by repeating the numbers that produced it.
-  const units = buildApartmentUnits(config)
   const unitsPerFloor = getUnitsPerFloor(config)
   // Every unit is identical under a uniform grid, so the first one is representative.
   const sampleUnit = units[0]

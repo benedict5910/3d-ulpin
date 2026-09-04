@@ -4,9 +4,11 @@
 
 **Goal:** SIH prototype for 3D ULPIN and vertical property mapping — a demonstrable system that extends the flat, parcel-level ULPIN idea into three dimensions so that individual floors/units in a vertical building can each be identified, located and inspected.
 
-**Current phase:** Phase 4 – apartment subdivision
+**Current phase:** Phase 5 – click selection + property inspector — **source complete, awaiting local verification, not committed**. Next: Phase 6 – prototype 3D ULPIN generator.
 
 **Local repo path:** `C:\Users\Admin\Projects\3d-ulpin`
+
+**Public deployment:** <https://3d-ulpin-three.vercel.app>
 
 ---
 
@@ -52,7 +54,7 @@
 - [x] `src/index.css` reworked for the full-height layout; styling still dark and minimal, with the 3D viewer as the visual focus
 - [x] No unit selection, no metadata, no floors, no GIS, no ULPIN logic — deliberately out of scope for this phase
 
-## Completed — Phase 3 (procedural floors) — *source complete, unverified locally*
+## Completed — Phase 3 (procedural floors) — *complete; verified as part of Phase 4*
 
 - [x] **Unit convention fixed project-wide: 1 Three.js unit = 1 metre.** Every dimension in the scene is now a real-world measurement.
 - [x] `src/scene/buildingConfig.ts` (**new**) — typed `BuildingConfig` (`width: 18`, `depth: 14`, `numberOfFloors: 5`, `floorHeight: 3`), plus `buildFloorLayouts()` and `getTotalHeight()`. No React, no Three.js — data and arithmetic only.
@@ -83,17 +85,18 @@
 
 Untouched: `main.tsx`, `index.html`, `package.json`, `tsconfig.json`, `vite.config.ts`, `.gitignore`. **No new dependencies were added in Phase 3.**
 
-**Not committed.** Phase 3 is working-tree state only, as instructed.
+Phase 3 was left uncommitted at the time; it went into version control as part of the Phase 4 checkpoint below.
 
-## Local verification required — Phase 3 (still open)
+## Local verification — Phase 3 (closed by the Phase 4 verification)
 
-`node_modules/` and `package-lock.json` are now present in the repo, so `npm install`
-appears to have been run since the Phase 2 note was written — but **this session has
-no shell on this machine and could not run or observe any command there**, so nothing
-below is confirmed.
+Phase 3's build and render were never checked at the time. They no longer need to be
+separately: Phase 4 kept `buildingConfig.ts`, `SceneViewer.tsx` and `Ground.tsx`, and the
+`npm run build` / `npm run dev` run recorded below exercises all of that code. Phase 3 is
+therefore closed, with the caveat that its *own* visual result — five full-floor slabs —
+no longer exists to be looked at, having been deliberately replaced.
 
-- [ ] `npm run dev` — **must be run by the developer**
-- [ ] `npm run build` (`tsc --noEmit && vite build`) — **must be run by the developer**
+- [x] `npm run dev` — passed on the host (recorded under Phase 4)
+- [x] `npm run build` (`tsc --noEmit && vite build`) — passed on the host (recorded under Phase 4)
 
 **What was verified for Phase 3, in the cloud sandbox:**
 
@@ -120,7 +123,7 @@ each grid square being one metre, the building should span 18 squares by 14.
 four boxes. The block's outer dimensions, the panel's first four rows and the camera
 behaviour are unchanged, so everything else in this section still applies.
 
-## Completed — Phase 4 (apartment subdivision) — *source complete, unverified locally*
+## Completed — Phase 4 (apartment subdivision) — *verified and complete*
 
 - [x] `src/scene/unitLayout.ts` (**new**) — typed `ApartmentUnit` model with `id`, `floorLevel`, `indexOnFloor`, `unitNumber`, `column`, `row`, `xMin`/`xMax`, `yMin`/`yMax`, `zMin`/`zMax`, `width`, `depth`, `height`, `areaSqM`, `volumeCubicM`. No React, no Three.js — property description only, like `buildingConfig.ts`.
 - [x] `BuildingConfig` **extended, not duplicated**: two new fields `unitColumns: 2` and `unitRows: 2`. The 2 × 2 grid is configuration, not a constant buried in a renderer. `getUnitsPerFloor()` and `getTotalUnits()` derive 4 and 20 from it.
@@ -153,16 +156,48 @@ behaviour are unchanged, so everything else in this section still applies.
 
 Untouched: `SceneViewer.tsx`, `Ground.tsx`, `main.tsx`, `vite-env.d.ts`, `index.html`, `package.json`, `tsconfig.json`, `vite.config.ts`, `.gitignore`. **No new dependencies were added in Phase 4.**
 
-**Not committed.** Phase 4 is working-tree state only, as instructed.
+## Deployment — configured and live
 
-## Local verification required — Phase 4
+| | |
+|---|---|
+| **Public URL** | <https://3d-ulpin-three.vercel.app> |
+| **Pipeline** | GitHub → Vercel, connected. Vercel builds and hosts from the repo. |
+| **Status** | **Working, and confirmed by observation** — not just configured. |
 
-This session has **no shell on this machine**, so nothing below is confirmed:
+The pipeline was proved by an accident worth recording: the developer opened the public
+URL and it served the **Phase 3** build, because the Phase 4 commit had not been pushed
+yet. That is stronger evidence than a green dashboard — it shows Vercel really is building
+from GitHub and serving what the repo's default branch contains, and that a push is what
+moves the deployment forward.
 
-- [ ] `npm run dev` — **must be run by the developer**
-- [ ] `npm run build` (`tsc --noEmit && vite build`) — **must be run by the developer**
+There is therefore always a shareable working link, which is the point of deploying from
+Phase 1 rather than at the deadline. Worth a glance at the live URL after each push to
+confirm the new build went out.
 
-**What was verified for Phase 4, in the cloud sandbox:**
+## Git checkpoint — Phase 4
+
+- **Committed and pushed** by the developer on 2026-09-04.
+- Commit message: `Phase 4: subdivide floors into 3D property units`
+- This is the project's first recoverable checkpoint: Phases 0–4 are now in version control rather than working-tree state, and a Git remote exists to push to. Everything before this commit was recoverable only by not breaking it.
+
+## Verified — Phase 4
+
+**On the Windows host, by the developer (2026-09-04):**
+
+- [x] `npm run build` (`tsc --noEmit && vite build`) — **PASS**
+- [x] `npm run dev` — **PASS**
+- [x] 20 independent 3D unit meshes rendered correctly
+- [x] 4 units per floor
+- [x] OrbitControls still working (orbit / zoom / pan)
+- [x] Unit summary panel values correct
+- [x] No visible overlap or rendering conflict
+
+The build passing is significant beyond this phase: it is the first time `tsc --noEmit`
+has run against the **real** `@types/three` and the R3F/drei type definitions on this
+machine. That closes the longest-standing blocker in this file — open since Phase 1 —
+and confirms the dependency ranges in `package.json` resolve and are mutually compatible.
+
+**Also verified in the cloud sandbox, before hand-off:**
 
 - All sources parsed with `tsc` in `strict` mode with module resolution disabled (the dependencies cannot be installed there — the registry is blocked by the sandbox's proxy policy) — no syntax, JSX or type-structure errors of our own.
 - `buildingConfig.ts` and `unitLayout.ts` were compiled and **executed**, and the generated data checked against the specification. All assertions passed:
@@ -174,9 +209,88 @@ This session has **no shell on this machine**, so nothing below is confirmed:
   - the four units **tile the floor exactly**: areas sum to 252 m² = 18 × 14 m, x extent −9…+9, z extent −7…+7, and a pairwise interval test found **zero overlaps**
   - total building volume 3 780 m³ = 18 × 14 × 15 m
 
-**What that does not prove:** that the R3F/drei props type-check against the real `@types/three`, that the bundle builds, or that the scene renders.
+**What Phase 4 looks like in the browser** — as specified beforehand, and confirmed on the host: the same 18 × 14 × 15 m block as Phase 3, but now visibly built from **20 boxes** — four per floor, in a 2 × 2 arrangement, each 9 m wide and 7 m deep, with thin dark seams running both vertically (between floors) and along the two centre lines of the footprint. Adjacent boxes differ slightly in shade in every direction, and no box is brightly coloured. The top-left panel reads *5 floors · 3.0 m · 15.0 m · 18 × 14 m*, then *20 vertical units · 4 per floor (2 × 2) · 9 × 7 m · 63 m² · 189 m³*. Left-drag still orbits, scroll zooms, right-drag pans. Nothing responds to a click — that is Phase 5.
 
-**What a correct Phase 4 result looks like in the browser:** the same 18 × 14 × 15 m block as Phase 3, but now visibly built from **20 boxes** — four per floor, in a 2 × 2 arrangement, each 9 m wide and 7 m deep, with thin dark seams running both vertically (between floors) and along the two centre lines of the footprint. Adjacent boxes differ slightly in shade in every direction, and no box is brightly coloured. The top-left panel reads *5 floors · 3.0 m · 15.0 m · 18 × 14 m*, then *20 vertical units · 4 per floor (2 × 2) · 9 × 7 m · 63 m² · 189 m³*. Left-drag still orbits, scroll zooms, right-drag pans. Nothing responds to a click — that is Phase 5.
+## Completed — Phase 5 (click selection + property inspector) — *source complete, NOT yet verified on the host, NOT committed*
+
+- [x] **Selection state lifted to `App.tsx`** — `useState<string | null>(null)`. `App` is the nearest component containing both readers: the 3D scene (which draws the selected unit differently) and the inspector panel (which describes it). They are siblings — the scene lives inside `<Canvas>`, the panel is HTML over it — so nothing lower can serve both.
+- [x] **The selection is stored as an id, not as the unit object.** `selectedUnitId: string | null`, resolved back to the record by `findUnitById(units, selectedUnitId)`. Reasons recorded in `ARCHITECTURE.md` §5.1: a string compares cheaply inside the twenty-mesh render loop; a stale id resolves to `null` and returns the panel to its empty state, whereas a stale *object* would keep pointing at a unit the scene no longer draws; and it stays one copy of the data instead of two. The id is the question, the `units` array is the answer.
+- [x] **The units array is generated once, in `App`,** and passed to `SceneViewer`, `BuildingSummary` and (via `findUnitById`) `PropertyInspector`. Previously `Building` and `BuildingSummary` each called `buildApartmentUnits` separately — the numbers always agreed, but they were separate objects, and selection makes object identity meaningful. **No duplicate geometry state anywhere:** the panel gets the same object the mesh was positioned from.
+- [x] **Every unit mesh is clickable.** `onClick` on each of the 20 meshes → `onUnitClick(unit.id, event)` → `SceneViewer.handleUnitClick` → `onSelectUnit(unit.id)` → `setSelectedUnitId`. Clicking a different unit replaces the selection; the previously selected unit reverts, because "selected" is derived per-mesh from one shared value rather than stored on each mesh.
+- [x] **`event.stopPropagation()` on click and on hover.** The ray does not stop at the first box — it passes through the building and reports every unit along its path. Without this, clicking the front face would also click the units behind it and the last handler to run would win.
+- [x] **Selection highlight: amber `#d99b3f` + emissive `#6b4310` (0.55) + a wireframe cage** built with `EdgesGeometry` on the unit's **true** bounds (not the shrunk visual box), so it sits ~3 cm proud of the mesh and reads as a crisp edge rather than z-fighting. `EdgesGeometry` rather than a `wireframe` material, which would also draw each face's triangulation diagonal. One deliberate hue against the two near-identical slate blues held in reserve since Phase 3 — no rainbow.
+- [x] **Hover feedback:** faint cool emissive (`#22384d`, 0.5) on the resting colour, plus `cursor: pointer` driven from the raycast result (a WebGL canvas is one DOM element, so the browser cannot know parts of it are clickable). Hover state is `useState` **local to `Building`** — nothing outside the 3D scene reads it, so it is not lifted.
+- [x] **Selection is visually stronger than hover, in two channels.** Hover brightens; selection changes hue *and* adds an outline. A selected unit ignores hover styling entirely, so hovering one unit while another is selected can never make the hovered one read as selected.
+- [x] **`src/ui/PropertyInspector.tsx` (new)** — top-right HTML overlay. Empty state: *"Select a property unit in the 3D model to inspect its spatial record."* Populated state: Unit, Floor, Property type, Area, Volume, Elevation, 3D bounds (X/Y/Z as `min → max`), Centroid (X/Y/Z). Imports no Three.js.
+- [x] **Every inspector value comes from the selected unit's generated data.** No example values are hard-coded. Bounds are read off the record; area and volume are the `areaSqM` / `volumeCubicM` computed in Phase 4; the centroid is `getUnitCenter(unit)` — the *same function* `Building` uses to place the mesh, so the point named is by construction the point the box is centred on. The panel's only arithmetic is `toFixed` formatting.
+- [x] **`propertyType` added to `ApartmentUnit`** as a `PropertyType` union (`'Residential' | 'Commercial' | 'Parking' | 'Common'`), set to `'Residential'` by the generator via a module constant. Property metadata sits on the same record as the geometry, so the panel *reads* a unit's use rather than deciding it; when later phases vary use by floor, one generator changes and no UI file does. This is the only field added — no geometry state duplicated.
+- [x] **`findUnitById(units, unitId)` added to `unitLayout.ts`** — the id → record lookup, returning `null` for `null` and for an unknown id. Kept next to the model rather than in `App`, since it is a fact about the unit collection.
+- [x] **OrbitControls and clicking coexist via a 5 px drag threshold.** `onPointerDown` on the `<Canvas>` records the press position in a `useRef` (a ref, not state — it is read during event handling and must never re-render); the click handler measures the distance travelled and ignores anything past `DRAG_TOLERANCE_PX = 5`. Without it, every camera rotation that began on a unit would also select it. OrbitControls itself is **unmodified** — it listens on the canvas element while picking comes from R3F's raycaster, so they never compete for a listener, only for the same gesture.
+- [x] **Clicking empty space clears the selection** via R3F's `onPointerMissed`, guarded by the same drag test so that finishing an orbit over the sky does not deselect. `Ground` has no pointer handlers, so it is not in R3F's interactive set and does not block this.
+- [x] **The building summary panel is unchanged and still visible** (top-left). It now receives `config` and `units` as props instead of regenerating the units itself; its rendered content is identical.
+- [x] **Both overlays are `pointer-events: none`**, so a drag passing under either panel still reaches the canvas.
+- [x] `src/index.css` — `.property-inspector` (top-right, 246 px, same panel language as the summary) and `.inspector-empty`. No layout change to anything existing.
+- [x] `src/App.tsx` — footer hint now leads with *Click a unit to inspect*.
+- [x] **No new dependencies.** The outline is plain Three.js (`BoxGeometry` + `EdgesGeometry`), not a drei helper.
+- [x] Still no ULPIN generation, no GIS, no topology validation, no ownership-conflict simulation, no AI, no backend, no basement, no exploded view — all deliberately out of scope for this phase. Camera, lighting, ground and building dimensions untouched.
+
+## Files changed in Phase 5
+
+| File | Change |
+|---|---|
+| `src/ui/PropertyInspector.tsx` | **new** — the selected unit's cadastral record; empty-state message when nothing is selected |
+| `src/App.tsx` | rewritten — owns `units` (generated once, `useMemo`) and `selectedUnitId`; resolves `selectedUnit` and wires scene ↔ panel; footer hint |
+| `src/scene/SceneViewer.tsx` | takes `units` / `selectedUnitId` / `onSelectUnit`; adds the click-vs-drag threshold, `onPointerDown` capture, `onPointerMissed` deselect, and passes selection into `Building` |
+| `src/scene/Building.tsx` | takes `units` as a prop instead of generating them; per-mesh `onClick` / `onPointerOver` / `onPointerOut`; hover state; selected + hover materials; `SelectionOutline` sub-component |
+| `src/scene/unitLayout.ts` | `PropertyType` union and `propertyType` field added to `ApartmentUnit`; `findUnitById()` added |
+| `src/ui/BuildingSummary.tsx` | takes `config` + `units` as props instead of regenerating the units; rendered output unchanged |
+| `src/index.css` | `.property-inspector`, `.inspector-empty` |
+| `ARCHITECTURE.md` | new section 5 "Selection and the property inspector"; old §5/§6 renumbered to §6/§7; repo tree and the `scene/` split rationale updated |
+| `PROJECT_STATUS.md` | this update |
+
+Untouched: `src/scene/buildingConfig.ts`, `Ground.tsx`, `main.tsx`, `vite-env.d.ts`, `index.html`, `package.json`, `package-lock.json`, `tsconfig.json`, `vite.config.ts`, `.gitignore`. **No new dependencies were added in Phase 5.**
+
+## Local verification REQUIRED — Phase 5
+
+**Not yet run. Phase 5 is not complete until these pass on the Windows host.**
+
+```bash
+cd C:\Users\Admin\Projects\3d-ulpin
+npm run build     # tsc --noEmit && vite build  — must pass
+npm run dev       # then open http://localhost:5173
+```
+
+Check in the browser:
+
+- [ ] The scene still renders 20 unit boxes, 4 per floor, as in Phase 4.
+- [ ] The **top-left building summary is still visible and unchanged**.
+- [ ] The **top-right inspector** reads *"Select a property unit in the 3D model to inspect its spatial record."* on load.
+- [ ] Hovering a unit turns the cursor into a pointer and lifts that unit slightly. Moving off restores it.
+- [ ] Clicking a unit turns it **amber with a wireframe cage** and fills the inspector.
+- [ ] Clicking a **different** unit moves the selection — the previous unit returns to slate, and exactly one unit is highlighted at a time.
+- [ ] Clicking the front face of the building selects the **front** unit, not one behind it.
+- [ ] **Left-drag still orbits, scroll still zooms, right-drag still pans** — and a drag that *starts on a unit* rotates the camera **without** selecting that unit.
+- [ ] Clicking the sky or the ground clears the selection back to the empty message.
+- [ ] Dragging with the pointer over either panel still orbits the camera.
+- [ ] Select **unit 302** (floor 3, right-hand front unit) and confirm the panel reads exactly:
+  *Unit 302 · Floor 3 · Property type Residential · Area 63 m² · Volume 189 m³ · Elevation 6.0 m – 9.0 m · X 0.0 → 9.0 m · Y 6.0 → 9.0 m · Z −7.0 → 0.0 m · Centroid 4.5, 7.5, −3.5 m.*
+- [ ] No console errors.
+
+## Verified in the cloud sandbox — Phase 5 (source only)
+
+Done before hand-off; **it does not replace the host run above.**
+
+- All sources parsed with `tsc` in `strict` mode with module resolution disabled — the dependencies still cannot be installed in the sandbox (npm registry blocked by the proxy policy), so this catches syntax, JSX and structural errors of our own but **cannot** check the R3F/drei/Three type signatures. That is exactly what `npm run build` on the host is for.
+- `buildingConfig.ts` + `unitLayout.ts` compiled and **executed** with the Phase 5 changes applied. All assertions passed:
+  - 20 units, 5 floors, all ids unique; Phase 4 figures unchanged (63 m², 189 m³ for every unit)
+  - every unit's `propertyType` is `'Residential'`
+  - `findUnitById(units, null)` → `null`; `findUnitById(units, 'unit-999')` → `null`
+  - `findUnitById(units, 'unit-302')` returns an object that **`units.includes()`** — i.e. the lookup hands back the same record the scene renders, not a copy. This is the single-source-of-truth claim, tested.
+  - unit 302 renders as: Unit **302**, Floor **3**, Property type **Residential**, Area **63 m²**, Volume **189 m³**, Elevation **6.0 m – 9.0 m**, X **0.0 → 9.0 m**, Y **6.0 → 9.0 m**, Z **−7.0 → 0.0 m**, Centroid **4.5, 7.5, −3.5 m** — matching the phase specification exactly.
+
+## Git checkpoint — Phase 5
+
+**None. Phase 5 is deliberately not committed** — the developer commits after verifying on the host. The last commit remains `Phase 4: subdivide floors into 3D property units`.
 
 ## Commands to run locally
 
@@ -192,47 +306,85 @@ npm run typecheck    # type-check only, no bundle
 
 ## Next phase
 
-**Phase 5 – click selection + property inspector.** Expected scope:
+**Phase 6 – prototype 3D ULPIN generator.** *Do not start before Phase 5 is
+verified on the host and committed.*
 
-1. Make a unit mesh clickable — R3F's `onClick` raycast resolves the hit to a mesh, and because each mesh *is* one `ApartmentUnit`, the handler gets `unit.id` directly.
-2. Hold the selected unit's id in React state, shared by the scene and the panel — the "state layer" of the architecture, appearing for the first time.
-3. A property inspector panel showing the selected unit's `unitNumber`, `floorLevel`, bounds, `areaSqM` and `volumeCubicM` — all values already generated in Phase 4, so the panel reads them rather than computing anything.
-4. Selection made visible in 3D: a distinct material on the selected unit. This is what the restrained Phase 4 palette was reserving colour for.
-5. Still no ULPIN generation, no GIS, no backend — the identifier format is the phase after.
+The identifier format has been decided:
+
+```
+KA-BLR-0482-001928-F03-U02
+│  │   │    │      │   └─ unit on that floor, zero-padded
+│  │   │    │      └───── floor, zero-padded — the vertical component
+│  │   │    └──────────── parcel / property number
+│  │   └───────────────── ward or survey block
+│  └───────────────────── city / district
+└──────────────────────── state
+```
+
+Expected scope:
+
+1. A `ulpin/` module that **encodes** those parts into the string, and decodes
+   it back — kept separate from the scene, because the identifier is the actual
+   subject of the project rather than a rendering detail.
+2. The parcel-level fields (`KA-BLR-0482-001928`) come from configuration; the
+   `F` and `U` segments are derived from the unit's own `floorLevel` and
+   `indexOnFloor`, which already exist on `ApartmentUnit`.
+3. The generated identifier surfaces in the **existing** `PropertyInspector`,
+   as one more field read off the selected unit — the panel built in Phase 5
+   should need no structural change.
+4. Round-trip validation: `decode(encode(unit))` returns the parts it started
+   with, and a malformed string is rejected rather than silently parsed.
+5. Still no GIS, no backend, no topology validation, no AI.
 6. Confirm it renders in dev **and** survives `npm run build`.
 
 ## Known issues
 
-- **Build still unverified.** The blocking item since Phase 1, and still open at the end of Phase 3. Nothing can be called done until `npm run build` passes on this machine and the scene is seen rendering in `npm run dev`.
-- **Dependency versions are ranges chosen without registry access.** `three ^0.180.0`, `@react-three/fiber ^9.0.0`, `@react-three/drei ^10.0.0` and `@types/three ^0.180.0` were selected for known mutual compatibility (fiber 9 and drei 10 are the React 19 generation) but were **not** resolved against the live registry. If `npm install` reports an unsatisfiable range or a peer conflict, the fix is to adjust the range — the scene code itself does not depend on a specific minor version.
-- **`three` and `@types/three` must stay on the same minor.** Three.js ships breaking changes between `0.x` releases, so if one is bumped the other must be bumped to match.
-- **No `package-lock.json` yet.** Created by the first `npm install`; should be committed so Vercel builds reproducibly.
-- No Git remote configured, so nothing can be pushed and deployment is not wired up.
-- Nothing has been committed to Git at all yet — the whole of Phases 0–4 is still uncommitted working-tree state. Worth committing as soon as the build passes.
+- ~~**Build unverified.**~~ **Closed at Phase 4.** `npm run build` and `npm run dev` both pass on the host. The blocking item since Phase 1.
+- ~~**Dependency versions are ranges chosen without registry access.**~~ **Closed at Phase 4.** `three ^0.180.0`, `@react-three/fiber ^9.0.0`, `@react-three/drei ^10.0.0` and `@types/three ^0.180.0` resolved, installed and type-checked successfully.
+- ~~**No `package-lock.json` yet.**~~ **Closed.** Present in the repo and now committed, so Vercel will build reproducibly.
+- ~~**Nothing committed to Git.**~~ **Closed at Phase 4.** Phases 0–4 are committed and pushed.
+- **`three` and `@types/three` must stay on the same minor.** Three.js ships breaking changes between `0.x` releases, so if one is bumped the other must be bumped to match. Still live — a future `npm update` can break this silently.
+- ~~**Vercel is not wired up.**~~ **Not an issue — it was already configured.** GitHub → Vercel is connected and <https://3d-ulpin-three.vercel.app> is live; the pipeline has been observed serving the repo's pushed state.
 - **The 0.06 m visual gap is cosmetic and must stay that way.** It is subtracted from each unit box's geometry size symmetrically, in all three axes, so it never moves a mesh centre. If a later phase needs real slab thickness, wall thickness or floor-to-ceiling clearance, that belongs in `BuildingConfig` as its own field, not in the visual constant.
 - **The unit grid is uniform by assumption.** Every floor is cut the same way and every unit is identical, which is why the summary panel can describe all 20 from `units[0]`. Real buildings have differently sized flats and floors that differ from each other; when that arrives, `buildApartmentUnits` needs a per-floor partition rather than one grid, and the panel needs a range rather than a single figure.
 - **Unit numbering assumes fewer than 100 units per floor.** `unitNumber` is `floorLevel` + a 2-digit index, so floor 1 unit 100 would collide with floor 11 unit 0. Fine for the prototype; worth noting before the ULPIN format is fixed.
+- **Phase 5 is unverified and uncommitted.** The source is complete but has never run on the host — see *Local verification REQUIRED — Phase 5* above. The sandbox check covers the project's own code, not the R3F/drei type signatures, so `npm run build` on the host is the real gate.
+- **The drag threshold is a heuristic.** `DRAG_TOLERANCE_PX = 5` decides whether a gesture was a click or an orbit. If a click ever feels unresponsive, or a small drag selects something, that constant in `SceneViewer.tsx` is the dial. A touch device may want a larger value.
+- **`propertyType` is uniform.** Every generated unit is `'Residential'`, set from one constant. The `PropertyType` union already admits `Commercial` / `Parking` / `Common`, so varying it is a change to the generator — but nothing yet reads it as anything but a label.
+- ~~**The 3D ULPIN identifier format is still undecided.**~~ **Closed.** Decided as `KA-BLR-0482-001928-F03-U02` — state, city/district, ward, parcel, floor, unit. The encoder is Phase 6; see *Next phase*.
 - The demo dataset (buildings, floors, units, coordinates) does not exist yet.
-- The 3D ULPIN identifier format is still undecided — which fields, in what order, and how the vertical component is encoded. Should be settled before the data model is written.
 
 ## Last verified state
 
 - **Verified on:** 2026-09-04
+- **Verified by:** the developer, on the Windows host — the first end-to-end verification
+  in the project's history.
 - **What was verified:**
-  - Phase 4 sources written into the working tree: `src/scene/unitLayout.ts` added;
-    `buildingConfig.ts`, `Building.tsx`, `BuildingSummary.tsx`, `index.css` and `App.tsx`
-    updated. `SceneViewer.tsx` and `Ground.tsx` deliberately untouched.
-  - The Phase 3 full-floor slab implementation is gone — `Building.tsx` contains no
-    per-floor mesh and no `SLAB_VISUAL_GAP`; it maps over `ApartmentUnit[]` only.
-  - All sources parse cleanly under `tsc --strict` (module resolution disabled; the
-    sandbox's proxy blocks the npm registry, so the real dependency types could not be
-    installed there).
-  - `buildingConfig.ts` + `unitLayout.ts` were compiled and **executed**: 20 units,
-    4 per floor, numbering 101–504, 9 × 7 × 3 m, 63 m², 189 m³, floor 3 at y 6–9 m with
-    centres at 7.5 m, exact tiling of the 18 × 14 m footprint with zero overlaps, and a
-    total volume of 3 780 m³. Every assertion passed.
-  - **No dependency install and no bundle build were run or observed by this session** —
-    it has no shell on this machine.
-- **Conclusion:** Phase 4 **source complete**, build and render **not yet verified**.
-  Phases 3 and 4 both stay open until `npm run build` succeeds and the 20 unit boxes are
-  seen in the browser. Nothing has been committed.
+  - `npm run build` (`tsc --noEmit && vite build`) — **PASS**. The bundle builds, and the
+    code type-checks against the real `@types/three` and the R3F/drei definitions.
+  - `npm run dev` — **PASS**. The scene renders.
+  - **20 independent 3D unit meshes**, 4 per floor, drawn correctly.
+  - OrbitControls still working; the summary panel's values correct; no visible overlap
+    or rendering conflict.
+  - Committed and pushed as `Phase 4: subdivide floors into 3D property units`.
+  - **Public deployment working.** <https://3d-ulpin-three.vercel.app> opened and tested in
+    the browser. It served the Phase 3 build at the time, because Phase 4 had not been
+    pushed yet — which confirms the GitHub → Vercel pipeline is functioning and tracks the
+    repo's pushed state.
+- **Also verified earlier, in the cloud sandbox:** `buildingConfig.ts` + `unitLayout.ts`
+  compiled and **executed** — 20 units, 4 per floor, numbering 101–504, 9 × 7 × 3 m,
+  63 m², 189 m³, floor 3 at y 6–9 m with centres at 7.5 m, exact tiling of the 18 × 14 m
+  footprint with zero overlaps, total volume 3 780 m³. Every assertion passed. Sources
+  parsed cleanly under `tsc --strict`.
+- **Conclusion:** **Phase 4 is complete.** Source, build, render and behaviour all
+  verified, and the work is committed and pushed. Phase 3 is closed with it. The project
+  has a recoverable checkpoint for the first time, and Phase 5 started from a known-good
+  state.
+- **Phase 5 is NOT part of the above.** Its source is written and its data model has been
+  compiled and executed in the sandbox, but nothing from Phase 5 has been built, rendered
+  or committed on the host. The last verified *and committed* state of this project is
+  still Phase 4. Run the Phase 5 checklist before treating it as done.
+- **Outstanding check:** the live URL was last observed serving the **Phase 3** build,
+  before the Phase 4 push. Vercel should have rebuilt on that push — worth opening
+  <https://3d-ulpin-three.vercel.app> once and confirming the 20 unit boxes are there.
+  This is a confirmation, not a blocker: the pipeline itself is known to work.
