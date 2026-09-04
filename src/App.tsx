@@ -1,8 +1,11 @@
 import { useMemo, useState } from 'react'
 
 import SceneViewer from './scene/SceneViewer'
+import GISMap from './map/GISMap'
+import ParcelInfoPanel from './map/ParcelInfoPanel'
 import BuildingSummary from './ui/BuildingSummary'
 import PropertyInspector from './ui/PropertyInspector'
+import { DEMO_PARCEL } from './data/demoParcel'
 import { DEFAULT_BUILDING_CONFIG } from './scene/buildingConfig'
 import { buildApartmentUnits, findUnitById } from './scene/unitLayout'
 import { runPrototypeUlpinSelfCheck } from './ulpin/ulpinSelfCheck'
@@ -30,6 +33,16 @@ import { runPrototypeUlpinSelfCheck } from './ulpin/ulpinSelfCheck'
  * Note that the arrow into the inspector starts at the *same* `units` array the
  * meshes were built from. The panel is not given a description of the selected
  * unit; it is given the unit.
+ *
+ * Phase 7 adds a second, parallel flow beside it — the horizontal one:
+ *
+ *   DEMO_PARCEL_IDENTITY ──┬─► buildApartmentUnits ──► unit.parentParcelId
+ *                          │                            (property inspector)
+ *                          └─► DEMO_PARCEL ──► GISMap + ParcelInfoPanel
+ *
+ * Both branches start at the *same* constant. That is the point of the phase:
+ * the parcel drawn on the 2D map and the parcel named on every unit's record
+ * are one parcel by construction, not two constants that happen to match.
  */
 
 function App() {
@@ -88,15 +101,33 @@ function App() {
         <p className="subtitle">Vertical Property &amp; Spatial Cadastre Platform</p>
       </header>
 
+      {/* Three columns, left to right: where the property is on the ground,
+          what it looks like in space, and what the record says about the
+          selected unit. Each is a real grid column now — before Phase 7 the
+          two panels floated over the canvas, which worked while the 3D scene
+          was the only content and stops working the moment a second view
+          needs room of its own. */}
       <main className="viewer">
-        <SceneViewer
-          units={units}
-          selectedUnitId={selectedUnitId}
-          onSelectUnit={setSelectedUnitId}
-        />
-        {/* HTML overlays, not 3D — they sit above the canvas, not inside it. */}
-        <BuildingSummary config={config} units={units} />
-        <PropertyInspector unit={selectedUnit} />
+        <section className="map-panel" aria-label="Cadastral parcel map">
+          <GISMap parcel={DEMO_PARCEL} />
+          <ParcelInfoPanel parcel={DEMO_PARCEL} />
+        </section>
+
+        <section className="scene-panel">
+          <SceneViewer
+            units={units}
+            selectedUnitId={selectedUnitId}
+            onSelectUnit={setSelectedUnitId}
+          />
+          {/* Still an overlay, and still deliberately so: the summary
+              describes the scene it sits on. `.scene-panel` is now its
+              positioning context instead of `.viewer`. */}
+          <BuildingSummary config={config} units={units} />
+        </section>
+
+        <section className="inspector-panel">
+          <PropertyInspector unit={selectedUnit} />
+        </section>
       </main>
 
       <footer className="app-footer">
@@ -106,7 +137,8 @@ function App() {
         </p>
         <p className="hint">
           Click a unit to inspect &middot; Drag to orbit &middot; Scroll to zoom
-          &middot; Right-drag to pan
+          &middot; Right-drag to pan &middot; Basemap &copy; OpenStreetMap
+          contributors
         </p>
       </footer>
     </div>

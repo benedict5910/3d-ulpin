@@ -4,7 +4,7 @@
 
 **Goal:** SIH prototype for 3D ULPIN and vertical property mapping — a demonstrable system that extends the flat, parcel-level ULPIN idea into three dimensions so that individual floors/units in a vertical building can each be identified, located and inspected.
 
-**Current phase:** Phase 6 – prototype 3D ULPIN generator — **source complete, awaiting local verification, not committed**. Phase 5 is verified and committed. Next: Phase 7 – GIS parcel map.
+**Current phase:** Phase 7 – GIS parcel map — **source complete, awaiting local verification, not committed**. Phase 6 is also source-complete and uncommitted. Phase 5 is the last verified and committed state. Next: Phase 8 – connect the 2D parcel to the 3D building.
 
 **Local repo path:** `C:\Users\Admin\Projects\3d-ulpin`
 
@@ -427,36 +427,215 @@ React/R3F type signatures — `npm run build` on the host remains the real gate.
 **None. Phase 6 is deliberately not committed** — the developer commits after
 verifying on the host, as with every previous phase.
 
+## Completed — Phase 7 (GIS parcel map) — *source complete, NOT verified on the host, NOT committed*
+
+The identifier from Phase 6 names a vertical property, but nothing showed *where
+on the ground* its parent parcel is. Phase 7 adds the horizontal half: a 2D
+Leaflet map beside the 3D viewer, drawing the cadastral parcel
+`KA-BLR-0482-001928` and the footprint of the building standing on it.
+
+- [x] **Dependencies added** — `leaflet ^1.9.4`, `react-leaflet ^5.0.0`,
+      `@types/leaflet ^1.9.12` (dev). `react-leaflet` v5 is the first line that
+      requires React 19, so it matches this project's React version exactly.
+      **`npm install` has not been run** — see verification below.
+- [x] **`src/data/demoParcel.ts`** — a typed demo parcel. `DemoParcel` carries
+      `parcelId`, `identity`, `state`, `city`, `latitude` / `longitude`,
+      `centre`, `boundary`, `buildingFootprint`, `areaSqM`,
+      `buildingFootprintAreaSqM`, `isDemoData: true` and `dataNote`.
+- [x] **Geometry authored in metres, converted to lat/lng by one function.**
+      Corners are written as `{ eastM, northM }` offsets from one origin and
+      converted with a local flat-earth transform that includes the
+      `cos(latitude)` term. Area is computed by the shoelace formula **over the
+      metre outlines**, so square metres come out exact rather than as
+      re-projected degrees.
+- [x] **The footprint is derived, not typed.** `buildFootprintOutlineM()` reads
+      `DEFAULT_BUILDING_CONFIG.width` / `.depth` — the same 18 × 14 the 3D floors
+      and units are generated from. The rectangle on the map *is* the 3D
+      building's outline, not a copy of its numbers.
+- [x] **One parcel identity, read twice.** `data/demoParcel.ts` imports
+      `DEMO_PARCEL_IDENTITY` and `formatParentParcelId()` from
+      `ulpin/parcelIdentity.ts`. The string `KA-BLR-0482-001928` appears nowhere
+      in the data module. The map's `Parent parcel` row and the inspector's are
+      the same four codes by construction.
+- [x] **`src/map/GISMap.tsx`** — `<MapContainer>` centred on the demo location at
+      zoom 19, an OpenStreetMap `<TileLayer>`, the parcel `<Polygon>`, the
+      footprint `<Polygon>`, a `<CircleMarker>` reference point, and hover
+      `<Tooltip>`s on all three. Takes the parcel as a prop; owns no data.
+- [x] **`src/map/parcelStyles.ts`** — one source for both layer styles, the tile
+      URL, the attribution and the zoom limits, so the legend cannot describe a
+      style the map has stopped using.
+- [x] **`src/map/MapLegend.tsx`** — *Cadastral Parcel* (dashed slate-blue) and
+      *Building Footprint* (solid accent green). Swatch colour, weight and
+      dashing are read from `parcelStyles.ts`, never restated in CSS.
+- [x] **`src/map/ParcelInfoPanel.tsx`** — Parent parcel, Location, Parcel area,
+      Building footprint, Coordinates, Data. Every figure read off the same
+      `DemoParcel` the polygons are drawn from.
+- [x] **Three-column dashboard** — `.viewer` is now a CSS grid:
+      map (336px) │ 3D viewer (`minmax(0, 1fr)`) │ inspector (306px). The
+      inspector stopped being a floating overlay and became a real column; the
+      building summary still floats, over `.scene-panel` instead of `.viewer`.
+- [x] **Leaflet CSS wired correctly** — `leaflet/dist/leaflet.css` imported in
+      `main.tsx` *before* `index.css`, so the project's dark-theme overrides win
+      specificity ties without `!important`.
+- [x] **Map sizing handled from two directions** — `.gis-map` gets a
+      `minmax(0, 1fr)` grid row **and** a `min-height: 260px` floor, and a
+      `ResizeObserver` inside `<MapContainer>` calls `map.invalidateSize()` on
+      every container resize.
+- [x] **`<CircleMarker>`, not `<Marker>`** — Leaflet's default marker icon is a
+      PNG on a relative URL that breaks under a bundler unless the icon paths are
+      patched by hand. A vector circle needs no asset and no patch.
+- [x] **Basemap kept clearly separate from cadastral data** — the OSM tiles are
+      the only networked thing on the map; parcel and footprint are local and
+      deterministic. A CSS filter scoped to `.leaflet-tile-pane` desaturates the
+      basemap without touching the vector overlays. Attribution appears in the
+      map control *and* the app footer.
+
+**Key figures produced by the demo data:** parcel **1 547 m²**, footprint
+**252 m²** (= 18 × 14 exactly), origin **12.9352° N, 77.6245° E**, ground
+coverage ≈ **16%**.
+
+**Key decision — geometry lives in `data/`, identity stays in `ulpin/`.** The
+identity says *which* parcel and changes on a re-numbering; the geometry says
+*where* and changes on a re-survey. Two lifetimes, two modules. The alternative
+— one file holding both — would mean a boundary correction touches the module
+the identifier generator depends on.
+
+## Files changed in Phase 7
+
+| File | Change |
+|---|---|
+| `src/data/demoParcel.ts` | **new** — `GeoPoint`, `LocalPointM`, `DemoParcel`, `localPointToGeoPoint()`, `polygonAreaSqM()`, `buildFootprintOutlineM()`, `buildDemoParcel()`, `DEMO_PARCEL` |
+| `src/map/parcelStyles.ts` | **new** — `PARCEL_BOUNDARY_STYLE`, `BUILDING_FOOTPRINT_STYLE`, `PARCEL_CENTRE_STYLE`, OSM tile URL + attribution, zoom constants |
+| `src/map/GISMap.tsx` | **new** — the Leaflet map, its three layers, and the `MapAutoSize` resize observer |
+| `src/map/MapLegend.tsx` | **new** — two-entry legend, swatches driven by `parcelStyles.ts` |
+| `src/map/ParcelInfoPanel.tsx` | **new** — the parcel record shown beneath the map |
+| `src/App.tsx` | three-column `<main>`; renders `<GISMap>` + `<ParcelInfoPanel>` with `DEMO_PARCEL`; OSM credit added to the footer hint |
+| `src/main.tsx` | imports `leaflet/dist/leaflet.css` before `./index.css` |
+| `src/index.css` | `.viewer` became a 3-column grid; new `.map-panel` / `.scene-panel` / `.inspector-panel`; `.property-inspector` is static, not absolute, and no longer `pointer-events: none`; new `.gis-map`, Leaflet dark-theme overrides, `.map-legend*`, `.parcel-info*`; a stacking media query below 1100px |
+| `package.json` | `leaflet`, `react-leaflet` added to dependencies; `@types/leaflet` to devDependencies |
+| `ARCHITECTURE.md` | new §7 (what GIS means here, the parcel polygon, the footprint, metres vs degrees, how Leaflet fits into React, one shared parcel identity, basemap vs cadastral geometry, the three-column layout, non-goals); old §7/§8 renumbered to §8/§9; repo tree, planned-additions and toolchain table updated |
+| `PROJECT_STATUS.md` | this section |
+
+No file was deleted. `SceneViewer.tsx`, `Building.tsx`, `Ground.tsx`,
+`unitLayout.ts`, `buildingConfig.ts`, `BuildingSummary.tsx`,
+`PropertyInspector.tsx` and the whole `ulpin/` module were **not touched** — the
+3D half of the application is byte-for-byte what Phase 6 left. Everything that
+changed about the 3D viewer's appearance is CSS layout.
+
+## Local verification REQUIRED — Phase 7
+
+Nothing below has run on the Windows host, and this phase is the first since
+Phase 1 to add dependencies. Run from `C:\Users\Admin\Projects\3d-ulpin`:
+
+1. **`npm install`** — mandatory and first. `leaflet`, `react-leaflet` and
+   `@types/leaflet` are declared in `package.json` but are not in
+   `node_modules`. Nothing else in this list will work until this succeeds.
+   Confirm `react-leaflet` resolves to **5.x**; if npm reports a peer-dependency
+   conflict against React 19, that is the signal it picked an older major.
+2. **`npm run build`** — must pass. `tsc --noEmit` runs first and is the real
+   gate: the map components have never been type-checked against the actual
+   `react-leaflet` and `@types/leaflet` definitions (see the sandbox note below).
+3. **`npm run dev`**, open <http://localhost:5173>.
+4. **The map renders.** Tiles load, the map fills the left column, and it is
+   **not** a zero-height strip or a vertical stack of unpositioned squares —
+   the latter means the Leaflet stylesheet did not load.
+5. **Both polygons are visible and distinguishable:** a dashed slate-blue
+   quadrilateral (the parcel) with a solid green rectangle inside it (the
+   footprint), plus a small white reference dot at the centre.
+6. **The legend** reads *Cadastral Parcel* and *Building Footprint*, and its two
+   swatches match the two lines on the map.
+7. **The parcel panel** shows `KA-BLR-0482-001928`, *Bengaluru, Karnataka*,
+   **1,547 m²**, **252 m²**, `12.9352° N, 77.6245° E`, *Demo / prototype
+   dataset*.
+8. **The identity matches across the app.** Click any unit; the inspector's
+   **Parent parcel** row must read the same `KA-BLR-0482-001928` as the map
+   panel's.
+9. **The 3D viewer is fully intact** — this is the regression that matters most:
+   orbit by dragging, zoom by scrolling, right-drag to pan; clicking a unit
+   selects it and fills the inspector; a drag that starts on a unit orbits
+   without selecting; hover still reads differently from selection; clicking
+   empty space clears the panel; the dev-console self-check line still appears
+   exactly once.
+10. **The inspector scrolls** if the record is taller than its column, and text
+    in it can be selected — both were impossible while it was
+    `pointer-events: none`.
+11. **Map interaction:** buttons and double-click zoom; drag pans; the
+    scroll wheel deliberately does **not** zoom the map. Hovering either polygon
+    shows a tooltip.
+12. **Resize the window.** The map must re-fill its column with no grey wedges
+    and no tiles left behind — that is the `ResizeObserver` doing its job.
+    Below ~1100px the three columns stack and the page scrolls.
+13. **StrictMode double-mount.** React 19 StrictMode mounts every component
+    twice in development. If the console shows *"Map container is already
+    initialized"*, react-leaflet's cleanup is not firing and the map must be
+    given a `key` or the version checked — the map itself should still render.
+14. **Offline check (optional but instructive):** stop the network and reload.
+    The basemap goes blank; the parcel, footprint, legend and panel are
+    unchanged. That is the basemap-versus-cadastral-data distinction, visible.
+15. **`npm run preview`** after the build — identical map, and the dev-only
+    self-check console line absent.
+
+## Verified in the cloud sandbox — Phase 7 (data layer only)
+
+`src/data/demoParcel.ts` imports no React and no Leaflet, so it was compiled
+under `tsc --strict --noUnusedLocals --noUnusedParameters` and **executed** in
+Node against the real `buildingConfig.ts` and `parcelIdentity.ts`:
+
+- `parcelId` → `KA-BLR-0482-001928`, formatted from the shared identity — the
+  literal string does not appear in the data module.
+- Parcel area **1 547 m²**; footprint area **252 m²**, matching
+  `width × depth` = 18 × 14 exactly.
+- Boundary and footprint each convert to four `[lat, lng]` pairs around
+  `12.9352, 77.6245`; the footprint's corners lie inside the boundary's extent.
+- Round-trip check with a haversine distance: a point authored 18 m east
+  measures **17.98 m**, and 14 m north measures **13.98 m** — a 0.1% error from
+  using one mean Earth radius, far below anything this prototype claims.
+- `polygonAreaSqM()` returns 0 for a degenerate two-point ring rather than
+  throwing.
+- `src/map/parcelStyles.ts` also type-checks clean under the project's flags.
+
+**What this does NOT cover.** The npm registry is unreachable from the sandbox,
+so `react`, `react-leaflet` and `@types/leaflet` could not be installed and the
+three `.tsx` map components have **never been type-checked or rendered**. Their
+JSX, their prop types against react-leaflet v5, and all of the CSS are
+unverified. `npm run build` on the host is the only real gate for this phase.
+
+## Git checkpoint — Phase 7
+
+**None. Phase 7 is deliberately not committed**, in keeping with every previous
+phase: the developer commits after verifying on the host. Note that Phase 6 is
+also still uncommitted, so a commit made now would carry both phases unless they
+are staged separately.
+
 ## Next phase
 
-**Phase 7 – GIS parcel map.** *Do not start before Phase 6 is verified on the
-host and committed.*
+**Phase 8 – connect the 2D parcel to the 3D building.** *Do not start before
+Phase 7 is verified on the host.*
 
-The identifier now names a vertical property but nothing yet shows *where on the
-ground* the parent parcel is. Phase 7 puts the 2D parcel on a map beside the 3D
-building, so `KA-BLR-0482-001928` stops being four codes and becomes a shape.
+Phases 6 and 7 built the two halves of a vertical property record and gave them
+a shared identity. They are still two views that happen to agree. Phase 8 makes
+the connection a *workflow*: the 2D parcel becomes the input the 3D model is
+generated from, rather than a picture beside it.
 
 Expected scope:
 
-1. A `map/` module with a Leaflet map showing the demo parcel `001928` as a
-   polygon on its zone, rendered from typed data — the same "structured data in,
-   view out" rule the 3D scene follows.
-2. Parcel geometry as demo data, in a `data/` module, kept separate from
-   `ParcelIdentity`: the identity says *which* parcel, the geometry says *where*.
-3. The map and the 3D scene read the **same** parcel identity, so the map's
-   selected parcel and the building's `parentParcelId` are provably one thing.
-4. A visible link between the two views: selecting the parcel highlights the
-   building it carries, and the inspector's `Parent parcel` row is where the two
-   halves meet.
-5. Still no backend, no topology validation, no ownership simulation, no AI.
-6. Confirm it renders in dev **and** survives `npm run build`.
+1. Selecting the parcel on the map selects the building it carries, and
+   highlights it in the 3D scene — one selection state across both views, the
+   double-headed arrow the §1 architecture diagram has always shown.
+2. Drive the 3D building's footprint *from* the parcel geometry rather than from
+   `BuildingConfig` alone: read the footprint ring, convert lat/lng back into
+   local metres, and extrude it. That inverts today's direction, in which the
+   config feeds the map.
+3. Handle a non-rectangular footprint, which follows immediately from (2) and is
+   the first thing that genuinely needs `ExtrudeGeometry` rather than a box.
+4. Only then consider topology validation (is the footprint inside the parcel?
+   do parcels overlap?) — it becomes meaningful the moment geometry can be
+   edited or supplied, and is noise while both rings are constants.
+5. Still no backend, no cadastral API, no AI extraction.
 
-Deferred, and deliberately not part of Phase 7 either: a **decoder** for the
-prototype identifier (`decode(encode(x)) === x`, malformed strings rejected).
-Phase 6 did not write one because nothing yet reads an identifier back apart,
-and a parser written before it has a caller is a parser written against a guess.
-It becomes worth building the moment an identifier arrives from outside the app
-— a URL, a pasted search box, an imported dataset.
+Deferred beyond that, unchanged from Phase 6: a **decoder** for the prototype
+identifier. Nothing yet reads an identifier back apart, and a parser written
+before it has a caller is a parser written against a guess.
 
 ## Known issues
 
@@ -470,6 +649,11 @@ It becomes worth building the moment an identifier arrives from outside the app
 - **The unit grid is uniform by assumption.** Every floor is cut the same way and every unit is identical, which is why the summary panel can describe all 20 from `units[0]`. Real buildings have differently sized flats and floors that differ from each other; when that arrives, `buildApartmentUnits` needs a per-floor partition rather than one grid, and the panel needs a range rather than a single figure.
 - **Unit numbering assumes fewer than 100 units per floor.** `unitNumber` is `floorLevel` + a 2-digit index, so floor 1 unit 100 would collide with floor 11 unit 0. This affects the *door label only* — as of Phase 6 the prototype 3D ULPIN is built from `floorLevel` and `indexOnFloor` as separate padded segments, so it cannot collide this way.
 - ~~**Phase 5 is unverified and uncommitted.**~~ **Closed.** Verified on the host and committed on 2026-09-04.
+- **Phase 7 is unverified and uncommitted, and it added dependencies.** `leaflet`, `react-leaflet` and `@types/leaflet` are declared in `package.json` but `npm install` has not been run, so `node_modules` does not contain them and `package-lock.json` is out of date. Nothing in Phase 7 can build until that install succeeds. The three `.tsx` map components have never been type-checked or rendered anywhere — see *Local verification REQUIRED — Phase 7*.
+- **`react-leaflet` v5 requires React 19.** That matches this project, but it is a hard peer requirement rather than a preference: if npm resolves an older `react-leaflet` major, the map components' props will not type-check. Confirm the installed major is 5.
+- **The map depends on a network for its basemap, and only for its basemap.** OpenStreetMap tiles are fetched at runtime; the parcel and footprint are local constants. Offline, the map greys out and every cadastral shape and figure still renders. Worth knowing before a demo on conference Wi-Fi — and worth showing, because it makes the distinction visible.
+- **No topology validation.** Nothing checks that the footprint lies inside the parcel, that the rings are simple, or that the winding order is consistent. `polygonAreaSqM()` uses `Math.abs`, so a reversed ring reports the right area rather than a negative one — which is forgiving, and also means a badly wound ring would go unnoticed. This is deliberate while both rings are constants; it becomes necessary the moment geometry can be supplied or edited.
+- **The metre-to-degree conversion is a local flat-earth approximation.** Valid because the parcel spans under fifty metres (measured error ≈ 0.1%). It is not a projection and must not be reused as one; a real system needs proper CRS handling.
 - **Phase 6 is unverified and uncommitted.** The source is complete but has never run on the host — see *Local verification REQUIRED — Phase 6* above. The sandbox check covers the pure identifier logic only, not JSX, CSS or the R3F/drei type signatures, so `npm run build` on the host is the real gate.
 - **The identifier is a prototype encoding, not an official format.** `KA-BLR-0482-001928-F03-U02` was invented for this demonstration and must never be presented as the Government of India ULPIN format. The disclaimer constant `PROTOTYPE_ENCODING_NOTE` is rendered with the identifier; if the identifier is ever shown somewhere new, the disclaimer goes with it.
 - **The parcel identity is a single hard-coded demo constant.** One building on one parcel. `buildApartmentUnits` already takes the parcel as a parameter, so a second parcel is a caller change, not a generator change — but nothing yet supplies one, and there is no check that two buildings on *different* parcels do not reuse a parcel number.
@@ -478,7 +662,7 @@ It becomes worth building the moment an identifier arrives from outside the app
 - **The drag threshold is a heuristic.** `DRAG_TOLERANCE_PX = 5` decides whether a gesture was a click or an orbit. If a click ever feels unresponsive, or a small drag selects something, that constant in `SceneViewer.tsx` is the dial. A touch device may want a larger value.
 - **`propertyType` is uniform.** Every generated unit is `'Residential'`, set from one constant. The `PropertyType` union already admits `Commercial` / `Parking` / `Common`, so varying it is a change to the generator — but nothing yet reads it as anything but a label.
 - ~~**The 3D ULPIN identifier format is still undecided.**~~ **Closed.** Decided as `KA-BLR-0482-001928-F03-U02` — state, city/district, ward, parcel, floor, unit. The encoder is Phase 6; see *Next phase*.
-- The demo dataset (buildings, floors, units, coordinates) does not exist yet.
+- ~~The demo dataset (buildings, floors, units, coordinates) does not exist yet.~~ **Partly closed at Phase 7.** One parcel with a boundary, a footprint and real coordinates now exists in `src/data/demoParcel.ts`. Still one parcel, one building — there is no multi-parcel dataset and no loader.
 
 ## Last verified state
 
@@ -506,7 +690,8 @@ It becomes worth building the moment an identifier arrives from outside the app
   verified, and the work is committed and pushed. Phase 3 is closed with it. The project
   has a recoverable checkpoint for the first time, and Phase 5 started from a known-good
   state.
-- **Phase 5 is NOT part of the above.** Its source is written and its data model has been
+- **Phases 5, 6 and 7 are NOT part of the above.** Phase 5 has since been verified on the host and committed (see *Local verification — Phase 5*). Phases 6 and 7 have not been built, rendered or committed anywhere; Phase 7's data layer has been executed in the sandbox and its React/Leaflet layer has not been compiled at all.
+- **Phase 5 detail, retained:** Its source is written and its data model has been
   compiled and executed in the sandbox, but nothing from Phase 5 has been built, rendered
   or committed on the host. The last verified *and committed* state of this project is
   still Phase 4. Run the Phase 5 checklist before treating it as done.

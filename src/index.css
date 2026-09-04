@@ -54,15 +54,57 @@ body {
   color: var(--muted);
 }
 
-/* The canvas sizes itself to this element, so it needs a real height.
-   min-height: 0 lets the 1fr row shrink properly inside the grid. */
+/* Phase 7: three working columns — the parcel on the ground, the property in
+   space, the record in words. Before this the viewer was one canvas with two
+   panels floating on it; a second *view* needs room of its own, not another
+   overlay.
+
+   minmax(0, 1fr) on the middle column, not plain 1fr: a bare 1fr track has an
+   automatic minimum of its content's size, and a WebGL canvas reports a size,
+   so the 3D column could push the grid wider than the window and never shrink
+   back. The explicit 0 minimum removes that floor.
+
+   min-height: 0 lets this 1fr row of the page grid shrink instead of
+   overflowing — the same reason it was here before. */
 .viewer {
-  position: relative;
+  display: grid;
+  grid-template-columns: 336px minmax(0, 1fr) 306px;
   min-height: 0;
 }
 
 .viewer canvas {
   display: block;
+}
+
+/* LEFT — the 2D map, with its parcel record beneath it. Two rows: the map
+   takes all the space that is going, the record takes what it needs. The map
+   row is minmax(0, 1fr) for the same reason as the 3D column above. */
+.map-panel {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
+  border-right: 1px solid var(--border);
+}
+
+/* CENTRE — the 3D viewer. `position: relative` moved here from `.viewer`: the
+   building summary is positioned against the canvas it describes, and now that
+   the canvas is one column of a grid, this is the element that means "the 3D
+   scene". */
+.scene-panel {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* RIGHT — the property inspector. Scrolls on its own if the record is taller
+   than the row; the page itself never scrolls. */
+.inspector-panel {
+  min-width: 0;
+  min-height: 0;
+  padding: 16px;
+  overflow-y: auto;
+  border-left: 1px solid var(--border);
 }
 
 /* Building summary — an HTML panel floating over the 3D canvas. */
@@ -84,20 +126,19 @@ body {
    Same visual language deliberately: this is a second read-out of the same
    model, not a different kind of thing. */
 .property-inspector {
-  position: absolute;
-  top: 16px;
-  right: 16px;
-  /* Widened in Phase 6 from 246px: the 26-character identifier is the panel's
-     headline value and should sit on one line at its display size. */
-  width: 274px;
+  /* Phase 7: this used to float over the canvas at top/right 16px with a fixed
+     274px width. It now *is* the right-hand column, so it fills its parent and
+     the parent owns the gutter.
+
+     `pointer-events: none` is gone with the overlap that justified it. It
+     existed only so an orbit drag passing under the panel still reached the
+     canvas; nothing overlaps the canvas any more, and keeping it would make a
+     tall record impossible to scroll or select text in. */
+  width: 100%;
   padding: 14px 16px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--panel);
-  backdrop-filter: blur(6px);
-  /* Read-only, and it overlaps the canvas — so it must not swallow orbit
-     drags that happen to pass under it. */
-  pointer-events: none;
 }
 
 /* The prototype 3D ULPIN block — deliberately the loudest thing in the panel.
@@ -227,4 +268,180 @@ body {
   margin: 0;
   font-size: 0.75rem;
   color: var(--muted);
+}
+
+/* ── Phase 7: the 2D cadastral map ──────────────────────────────────────── */
+
+/* Leaflet measures its container in pixels once, at initialisation, and it has
+   no fallback: a container of zero height produces a zero-height map with no
+   warning, no error and no tiles — the single most common way a Leaflet map
+   "does not work". So height is supplied from two directions. The 1fr grid row
+   in `.map-panel` gives it real height in the normal layout, and `min-height`
+   is a floor that survives any layout where that row collapses. */
+.gis-map {
+  position: relative;
+  min-width: 0;
+  min-height: 260px;
+}
+
+/* Leaflet's own root element. It fills the wrapper above rather than carrying
+   its own dimensions, so there is exactly one place height is decided. */
+.gis-map .leaflet-container {
+  height: 100%;
+  width: 100%;
+  /* Shows through before tiles arrive, and in the gaps at the edges of the
+     world — a page-coloured backdrop rather than Leaflet's default grey. */
+  background: #0d1319;
+  font: inherit;
+  outline: none;
+}
+
+/* The basemap is a light raster and this interface is dark. The filter is
+   scoped to the *tile* pane alone, so the parcel and footprint — which Leaflet
+   draws in the overlay pane — keep their true colours. Cosmetic, but it also
+   does something useful: it makes the line between the borrowed basemap and
+   our own cadastral geometry visible at a glance. */
+.gis-map .leaflet-tile-pane {
+  filter: grayscale(0.72) brightness(0.68) contrast(1.06);
+}
+
+/* Leaflet's controls ship light-themed. Restyled, not hidden — the zoom
+   buttons are useful and the attribution is required. */
+.gis-map .leaflet-control-zoom a {
+  background: var(--panel);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.gis-map .leaflet-control-zoom a:hover {
+  background: #16212c;
+  color: var(--text);
+}
+
+.gis-map .leaflet-control-attribution {
+  background: rgba(13, 19, 26, 0.78);
+  color: var(--muted);
+  font-size: 0.625rem;
+}
+
+.gis-map .leaflet-control-attribution a {
+  color: var(--muted);
+}
+
+/* Tooltips, matched to the panels. */
+.gis-map .leaflet-tooltip {
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 0.6875rem;
+  box-shadow: none;
+}
+
+.gis-map .leaflet-tooltip::before {
+  display: none;
+}
+
+/* The legend. HTML over the map, not a Leaflet control — the same relationship
+   the building summary has to the 3D canvas.
+
+   z-index 500 is chosen against Leaflet's own scale, not invented: its map
+   panes sit at 200–600 and its controls at 700–1000, so 500 clears the tiles
+   and vectors while staying under the zoom buttons and the attribution. */
+.map-legend {
+  position: absolute;
+  left: 10px;
+  bottom: 24px;
+  z-index: 500;
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  backdrop-filter: blur(6px);
+  /* Purely a key. It must not intercept a drag meant for the map beneath it. */
+  pointer-events: none;
+}
+
+.map-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.6875rem;
+  color: var(--text);
+}
+
+/* A line, not a box: zero height plus a top border, so what the swatch shows
+   is exactly the stroke it stands for. Colour, width and dashing come from the
+   component as inline styles, read from the same constants the map draws with
+   — see src/map/parcelStyles.ts. */
+.map-legend-swatch {
+  flex: none;
+  width: 18px;
+  height: 0;
+  border-top-style: solid;
+}
+
+/* The parcel record beneath the map. Reuses the summary/inspector list styles
+   deliberately: it is a third read-out of the same model, not a new kind of
+   thing. */
+.parcel-info {
+  padding: 12px 14px;
+  border-top: 1px solid var(--border);
+}
+
+/* Narrower column than the inspector, and two rows carry long values
+   ("Bengaluru, Karnataka", the coordinate pair), so the rows are allowed to
+   wrap rather than being squeezed or clipped. */
+.parcel-info .summary-row {
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 0.75rem;
+}
+
+.parcel-info .summary-row dd.mono {
+  font-size: 0.6875rem;
+}
+
+.parcel-info-note {
+  margin: 10px 0 0;
+  font-size: 0.6875rem;
+  font-style: italic;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+/* Below roughly a laptop's width the three columns stop being three columns:
+   336 + 306 px of panels leaves the 3D viewer too little to be worth orbiting.
+   They stack instead, and the page is allowed to scroll — the only place in
+   this application where it is. */
+@media (max-width: 1100px) {
+  body {
+    overflow: auto;
+  }
+
+  .app {
+    height: auto;
+    min-height: 100%;
+  }
+
+  .viewer {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .map-panel {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .scene-panel {
+    min-height: 60vh;
+  }
+
+  .inspector-panel {
+    border-left: none;
+    border-top: 1px solid var(--border);
+  }
 }

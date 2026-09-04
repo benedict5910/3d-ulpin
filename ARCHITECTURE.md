@@ -31,6 +31,10 @@ The prototype is a **single-page browser application with no server**. Everythin
                     └──────────────────────────────────────────┘
 ```
 
+*As of Phase 7 both views exist and both read the same parcel identity, but the
+double-headed arrow between them is still aspirational: selection state is shared
+within the 3D half only. Linking the two views is the next phase — see §7.9.*
+
 **The core idea being demonstrated:** a normal ULPIN identifies a parcel of land on a flat map. A *3D* ULPIN extends that identifier with a vertical component — block / floor / unit — so a specific apartment in a tower has its own unique, resolvable ID. The app shows the same property in two linked views (a 2D map and a 3D model) and lets the user click through to the identifier and its attributes.
 
 ### Layers
@@ -131,8 +135,9 @@ just listens for mouse events and moves the **camera** around a target point.
 
 ### GIS / 2D map: Leaflet
 
-- Lightweight, no API key, works with free tile providers, and handles the standard GIS primitives the prototype needs: base map tiles, GeoJSON polygons for parcel boundaries, markers and popups.
+- Lightweight, no API key, works with free tile providers, and handles the standard GIS primitives the prototype needs: base map tiles, polygons for parcel boundaries, markers and tooltips.
 - Leaflet gives the horizontal (real-world location) half of the story; Three.js gives the vertical half. Together they are the "3D" in 3D ULPIN.
+- **Built in Phase 7** — see §7. `react-leaflet` is the React binding, and it stands in the same relation to Leaflet that `@react-three/fiber` does to Three.js: a declarative wrapper, never a second model.
 
 ### Data: local structured demo data
 
@@ -985,7 +990,8 @@ forgotten in another.
 
 ### 6.10 What Phase 6 deliberately does not do
 
-No GIS or map layer. No topology or overlap validation. No ownership-conflict
+No GIS or map layer *(added in Phase 7 — see §7)*. No topology or overlap
+validation. No ownership-conflict
 simulation. No AI. No backend, no database, no government API. No basement
 levels and no negative floors. No exploded view. No decoder — nothing yet needs
 to read an identifier back apart, and a parser written before it has a caller is
@@ -994,9 +1000,342 @@ none of them is worth a partial implementation now.
 
 ---
 
-## 7. Repository shape
+## 7. The GIS parcel map (Phase 7)
 
-### As built (Phases 1–6 — this exists now)
+### 7.1 What "GIS" means in this prototype
+
+GIS — Geographic Information System — is a large field, and this prototype uses
+a deliberately small corner of it. Here, GIS means exactly three things:
+
+1. **Positions on the Earth**, expressed as latitude and longitude in decimal
+   degrees.
+2. **Shapes made from those positions** — closed rings of coordinates, each
+   standing for a real thing on the ground, each carrying attributes (an
+   identifier, an area, a name).
+3. **A way to draw them over a map of the world**, so a shape can be seen in the
+   context of the roads and blocks around it.
+
+That is the whole of it. There is no spatial database, no projection library,
+no topology engine, no query language, no analysis. Those are what a production
+GIS adds, and every one of them is out of scope for a 48-hour prototype.
+
+The distinction worth holding onto is that **GIS is about the horizontal
+world**. It answers *where*, on a two-dimensional surface. Three.js answers
+*how high, and what is inside*. The prototype needs both because a vertical
+property has a location on the ground **and** a position in the air, and
+neither view can express the other's answer. `KA-BLR-0482-001928-F03-U02` is
+one property described in two halves: the map draws the first four segments,
+the 3D scene draws the last two.
+
+### 7.2 What the parcel polygon represents
+
+The **cadastral parcel** is the legal unit of land — the plot, as a registry
+records it. It is the thing that has an owner, a survey number, a tax
+assessment and, in India's flat ULPIN scheme, an identifier. The polygon on the
+map is that plot's boundary: four corners enclosing roughly 46 m by 34 m, an
+area of **1 547 m²**.
+
+Three things about it are worth stating plainly.
+
+**It is a legal line, not a physical one.** There is usually nothing on the
+ground at a cadastral boundary — no wall, no paint, no fence that matches it
+exactly. That is why it is drawn dashed: a dashed line reads as an abstraction,
+which is what it is.
+
+**It is not a rectangle.** The demo boundary is a slightly irregular
+quadrilateral on purpose. Real plots follow old field boundaries, road
+widenings and the shape of whatever the neighbours agreed to a century ago. A
+perfectly square demo parcel quietly teaches the wrong lesson about what
+cadastral geometry looks like, and makes the 18 × 14 m footprint inside it look
+like a scale model rather than a building on a plot.
+
+**It is invented.** Every coordinate is demo data. `data/demoParcel.ts` says so
+in its header, `DEMO_PARCEL_DATA_NOTE` says so in the panel, and no phase of
+this prototype calls a cadastral API.
+
+### 7.3 What the building footprint represents
+
+The **footprint** is the outline of the building where it meets the ground —
+the shape you would trace by walking around its outside walls, or the shape it
+casts on a plan drawing. Here it is **18 m × 14 m = 252 m²**, and it sits inside
+the parcel with setbacks on all four sides.
+
+The important property is that this rectangle is **not typed in**. It is
+computed from `DEFAULT_BUILDING_CONFIG.width` and `.depth` — the same two
+numbers `buildFloorLayouts` and `buildApartmentUnits` generate the 3D geometry
+from:
+
+```
+DEFAULT_BUILDING_CONFIG { width: 18, depth: 14, ... }
+        │
+        ├──► buildFloorLayouts / buildApartmentUnits ──► 20 meshes in Three.js
+        │
+        └──► buildFootprintOutlineM ──► the green rectangle on the map
+```
+
+So the map is not showing *a* building, it is showing **this** building. Change
+`width` to 22 and both views change together, because there is only one width in
+the project. The footprint is the 3D model's shadow, and the code makes that
+literal.
+
+The relationship between the two polygons is the ratio a planning authority
+cares about: 252 m² of footprint on 1 547 m² of plot is about **16% ground
+coverage**. Five floors of it is roughly 1 260 m² of built-up area — which is
+exactly the kind of number a 3D cadastre exists to make computable.
+
+### 7.4 Why the geometry is authored in metres, not degrees
+
+Every coordinate in `data/demoParcel.ts` is written as a **local offset in
+metres** from one origin point, and converted to latitude/longitude by a single
+function. `{ eastM: -23, northM: -17 }`, not `12.935047, 77.624288`.
+
+Three reasons, and each one pays for itself:
+
+1. **It matches the project's unit convention.** The whole model is built on
+   *1 unit = 1 metre*. Authoring the map geometry in metres means the 2D
+   footprint and the 3D building are stated in the same units, so the 18 × 14
+   figure is *reused* rather than re-measured into a second coordinate system.
+2. **Area comes out exact.** The shoelace formula over metres gives a true
+   square-metre figure. The same formula over raw degrees gives a number in
+   degrees-squared that has to be re-projected — and re-projected wrongly at any
+   latitude other than the equator, because a degree of longitude is shorter
+   than a degree of latitude everywhere else.
+3. **A human can review them.** "23 m west and 17 m south of the reference
+   point" is a statement someone can check against a plan. Six decimal places of
+   latitude is not.
+
+The conversion itself is deliberately small:
+
+```
+latitude  = originLat + northM / 111320
+longitude = originLng + eastM  / (111320 × cos(originLat))
+```
+
+The `cos(latitude)` term is the one that must not be dropped. Meridians converge
+towards the poles, so at Bengaluru's ~12.94° N a degree of longitude is about
+2.6% shorter than a degree of latitude. Ignoring that stretches every east–west
+measurement — on an 18 m building, nearly half a metre, in one direction only,
+which is exactly the sort of quiet distortion that makes a footprint sit
+visibly askew inside its parcel.
+
+This is a flat-earth approximation and is valid only because the whole parcel
+spans under fifty metres. It is **not** a general projection and must not be
+reused as one; a real system carries proper CRS handling (EPSG:4326 for storage,
+a local UTM zone for measurement). Measured back with a haversine distance, 18 m
+east comes out as 17.98 m and 14 m north as 13.98 m — a 0.1% error from using
+one mean Earth radius, four orders of magnitude better than this demo needs.
+
+### 7.5 How Leaflet fits into the React application
+
+**What Leaflet is.** A small open-source JavaScript library for interactive
+maps. It handles the things a map has to do and nothing else: fetch square
+image tiles for the visible area and stitch them into a seamless picture, pan
+and zoom, convert between screen pixels and latitude/longitude, and draw vector
+shapes — polygons, lines, circles, markers — on top in the right place at every
+zoom level. It has no opinion about where data comes from and needs no API key
+or account.
+
+**What react-leaflet is.** A thin binding, not a reimplementation. Leaflet is
+imperative — you create a map object, call `addLayer`, keep the handle, remove
+it later. React is declarative — you describe what should exist and the renderer
+works out the calls. react-leaflet closes that gap: `<Polygon positions={…} />`
+creates a Leaflet polygon on mount, updates its options when the props change,
+and removes it on unmount.
+
+The parallel with the 3D half is exact, and it is why the codebase feels
+consistent across two very different libraries:
+
+| | 3D | 2D |
+|---|---|---|
+| Underlying library | Three.js | Leaflet |
+| React binding | `@react-three/fiber` | `react-leaflet` |
+| Root component | `<Canvas>` | `<MapContainer>` |
+| A drawn thing | `<mesh>` | `<Polygon>` / `<CircleMarker>` |
+| Access to the raw object | `useThree()` | `useMap()` |
+| Where the data comes from | `unitLayout.ts` | `demoParcel.ts` |
+
+Both are "structured data in, view out". Neither library ever owns the model.
+
+**Three practical points the code makes explicit:**
+
+*The stylesheet is not optional.* `leaflet/dist/leaflet.css` is imported in
+`main.tsx`, before `index.css`. Leaflet positions its tiles with CSS; without
+that file the map renders as a vertical stack of unpositioned square images and
+the controls appear as bare text. It is imported at the entry point rather than
+in the component because it is global, and importing it *first* means the
+project's own rules win any specificity tie — which is what allows the dark-theme
+overrides for Leaflet's controls to work by restyling rather than by `!important`.
+
+*The container must have height.* Leaflet measures its container in pixels once,
+at initialisation, and a zero-height container produces a zero-height map with
+no warning and no error — the most common way a Leaflet map "does not work".
+`.gis-map` therefore gets height from two directions: a `minmax(0, 1fr)` grid
+row in the normal layout, and a `min-height: 260px` floor that survives a layout
+where that row collapses. A `ResizeObserver` inside `<MapContainer>` calls
+`map.invalidateSize()` whenever the container's size changes afterwards, because
+Leaflet caches that first measurement and has no way to notice a grid column
+getting wider — a stale cache shows as grey wedges where tiles should be and
+clicks landing a few pixels off.
+
+*No default marker.* The reference point is a `<CircleMarker>`, not a
+`<Marker>`. Leaflet's default marker icon is a PNG referenced by a relative URL,
+which breaks under a bundler unless the icon paths are patched by hand. A circle
+is a vector: no asset, no patch, no build-configuration footnote.
+
+### 7.6 Why the 2D parcel and the 3D property system share one parcel identity
+
+This is the architectural point of the phase, and it is worth being precise
+about what is being claimed.
+
+The naive version of this feature would put `'KA-BLR-0482-001928'` in the map's
+data file and be done. It would look identical on screen. It would also be a
+**coincidence** — two strings that happen to match today, with nothing stopping
+one from being edited tomorrow. The map would then show one parcel and the
+inspector would name another, and the application would be quietly, unfalsifiably
+wrong: every number on screen would still look plausible.
+
+So instead there is one source, read twice:
+
+```
+ulpin/parcelIdentity.ts
+  DEMO_PARCEL_IDENTITY { stateCode: 'KA', cityCode: 'BLR', zoneCode: '0482',
+                         parcelNumber: '001928' }
+        │
+        ├──► buildApartmentUnits(config, parcel)
+        │      └─► every unit's parentParcelId  ──► PropertyInspector
+        │
+        └──► buildDemoParcel(identity)
+               └─► DEMO_PARCEL.parcelId         ──► GISMap + ParcelInfoPanel
+```
+
+Both branches call `formatParentParcelId()` on the same four strings.
+`data/demoParcel.ts` does not contain the text `KA-BLR-0482-001928` anywhere —
+it imports the identity and formats it. The two panels showing the same
+identifier is therefore not a fact to be checked but a consequence of the
+structure, and the only way to make them disagree is to give the two calls
+different identities on purpose.
+
+**Why the identity and the geometry are still separate modules.** They are
+different kinds of fact with different lifetimes. The identity says *which*
+parcel — four administrative codes, changed by a re-numbering. The geometry says
+*where* — coordinates, changed by a re-survey. Either can change without the
+other. Keeping them in one file would mean a boundary correction touches the
+module the identifier generator depends on, which is how unrelated things start
+breaking each other.
+
+This also sets up what comes next. Right now the connection is a shared string:
+the map's `Parent parcel` row and the inspector's `Parent parcel` row read the
+same value. The next phase makes it a shared *interaction* — clicking the parcel
+selects the building it carries, and the 3D units become addressable from the
+2D map — and that only works because both sides already agree on what the parcel
+is.
+
+### 7.7 Basemap tiles versus cadastral geometry
+
+The map draws three things and only two of them are ours. Confusing them is the
+single most misleading thing this view could do, so the distinction is enforced
+in three places at once — in the layer order, in the styling, and in the words.
+
+| | Basemap tiles | Parcel polygon | Building footprint |
+|---|---|---|---|
+| What it is | Photographs of a rendered world map, cut into squares | The legal plot boundary | The building's ground outline |
+| Where it comes from | `tile.openstreetmap.org`, over the network | `data/demoParcel.ts`, in this repo | `DEFAULT_BUILDING_CONFIG`, in this repo |
+| Format | Raster (PNG images) | Vector (coordinates) | Vector (coordinates) |
+| Authority | None for our purposes — context only | Demo data; represents what a registry would hold | Demo data; represents what a survey would hold |
+| Replaceable? | Yes, entirely — swap the URL | No, it *is* the data | No, it *is* the data |
+| Zoom behaviour | Blurs past zoom 19 (upscaled) | Stays sharp at any zoom | Stays sharp at any zoom |
+
+**The basemap is scenery.** It exists so a viewer can see that the parcel sits
+next to roads and buildings rather than floating in a void. It contributes
+nothing to the cadastral record. Point the `TileLayer` at a different provider,
+at a local offline tile set, or delete it entirely, and the parcel and footprint
+render exactly as before, in exactly the same place, with exactly the same
+areas — the application still *works*, it just loses its sense of place. Nothing
+downstream reads a pixel of it.
+
+**Everything cadastral is local and deterministic.** No fetch, no key, no
+network dependency, identical on every machine and offline. This matters for a
+judged demo — a dead conference Wi-Fi connection greys the background and leaves
+the actual content intact — and it matters more as a statement about the data
+model: the record does not live in someone else's tile server.
+
+**The styling says so too.** A CSS filter desaturates and darkens the tile pane
+so it recedes behind the interface. It is scoped to `.leaflet-tile-pane` alone,
+so the parcel and footprint — which Leaflet draws in a separate overlay pane —
+keep their true colours. The visual result is that the borrowed layer looks
+borrowed and our layers look authored, which is exactly the right impression.
+
+**And the attribution is not decoration.** OpenStreetMap's tiles are free to use
+under the ODbL, which requires crediting contributors. The `attribution` prop on
+`<TileLayer>` puts that credit in the corner of the map, and it is repeated in
+the application footer. It is a licence obligation, not a nicety.
+
+### 7.8 Layout: three columns, and why the panels stopped floating
+
+Phases 3–6 put the summary and inspector panels *over* the canvas, absolutely
+positioned with `pointer-events: none` so an orbit drag passing beneath them
+still reached the 3D scene. That was right while the 3D viewer was the only
+content: an overlay costs no layout space, and there was no second view
+competing for it.
+
+A second **view** changes the calculus. A map is not an annotation on the 3D
+scene; it is a peer of it, and it needs real width, a real height Leaflet can
+measure, and its own scroll and pointer behaviour. So `.viewer` became a
+three-column grid:
+
+```
+┌──────────────────┬───────────────────────────┬───────────────────┐
+│  2D parcel map   │   3D property viewer      │ Property          │
+│  (336px)         │   (1fr — the largest)     │ inspector (306px) │
+│  ┌────────────┐  │                           │                   │
+│  │  Leaflet   │  │   ┌───────────────┐       │  Prototype        │
+│  │  + legend  │  │   │ building      │       │  3D ULPIN         │
+│  └────────────┘  │   │ summary       │       │  …                │
+│  Cadastral       │   └───────────────┘       │                   │
+│  Parcel record   │   (still an overlay)      │                   │
+└──────────────────┴───────────────────────────┴───────────────────┘
+      WHERE                    WHAT                     RECORD
+```
+
+Read left to right it is the same order a property is described in: where it is,
+what it looks like, what the register says about it. The 3D viewer keeps the
+largest column because it is still the centre of the demonstration, and the map
+is deliberately the narrowest — a 46 m plot needs very little room.
+
+Two details in the CSS are load-bearing rather than cosmetic:
+
+- **`minmax(0, 1fr)`, not `1fr`,** on the 3D column and the map row. A bare
+  `1fr` track has an automatic minimum equal to its content's size, and a WebGL
+  canvas reports a size — so the column could push the grid wider than the
+  window and never shrink back. The explicit `0` minimum removes that floor.
+- **`pointer-events: none` is gone from the inspector.** It existed only to let
+  orbit drags pass through an overlapping panel. Nothing overlaps the canvas any
+  more, and keeping it would have made a tall record impossible to scroll or
+  select text in. The building summary keeps it, because it still floats.
+
+Below 1100px the three columns stack and the page is allowed to scroll — the
+only place in this application where it does.
+
+### 7.9 What Phase 7 deliberately does not do
+
+No cadastral API and no external data source of any kind beyond the OSM
+basemap. No AI extraction of parcels from imagery or documents. No topology
+validation — nothing checks that the footprint lies inside the parcel, that
+parcels do not overlap, or that a ring is simple and correctly wound. No
+2D-to-3D generation: the map does not build the 3D model, and the two are
+connected today only by a shared identity, not by a workflow. No backend, no
+database, no ownership records, no valuation. No second parcel, and therefore no
+parcel selection — `buildDemoParcel()` already takes an identity and a config as
+parameters, so a second parcel is a caller change rather than a rewrite, but
+nothing yet supplies one. No linked highlighting between the map and the 3D
+scene. Each of these is a later phase or a non-goal, and each would be worse as
+a partial implementation than as an honest absence.
+
+---
+
+## 8. Repository shape
+
+### As built (Phases 1–7 — this exists now)
 
 ```
 3d-ulpin/
@@ -1009,14 +1348,25 @@ none of them is worth a partial implementation now.
 ├─ vite.config.ts            # Vite config; enables the React plugin
 └─ src/
    ├─ main.tsx               # entry point: mounts <App> into #root
+   │                         # Phase 7: imports leaflet/dist/leaflet.css first
    ├─ App.tsx                # page shell + Phase 5: owns the units array and the selection
    │                       # Phase 6: runs the identifier self-check in dev
+   │                       # Phase 7: three-column layout; passes DEMO_PARCEL to the map
    ├─ index.css              # dark theme; global styles
+   │                         # Phase 7: the three-column viewer grid + map styling
    ├─ vite-env.d.ts          # tells TypeScript about Vite-specific imports (e.g. CSS)
    ├─ ulpin/                 # the identifier, added Phase 6 — no React, no Three.js
    │  ├─ parcelIdentity.ts   # ParcelIdentity, DEMO_PARCEL_IDENTITY, parent-parcel text
    │  ├─ generateUlpin.ts    # generatePrototype3DULPIN(), padding, uniqueness guard
    │  └─ ulpinSelfCheck.ts   # pure known-answer + uniqueness checks; dev-only runner
+   ├─ data/                  # demo datasets, added Phase 7 — no React, no Leaflet
+   │  └─ demoParcel.ts       # DemoParcel, metre→lat/lng conversion, shoelace area,
+   │                         # DEMO_PARCEL built from the shared parcel identity
+   ├─ map/                   # everything 2D (added Phase 7)
+   │  ├─ GISMap.tsx          # <MapContainer>: tiles, parcel, footprint, centre point
+   │  ├─ MapLegend.tsx       # the key; swatches read from parcelStyles.ts
+   │  ├─ ParcelInfoPanel.tsx # the parcel record beneath the map
+   │  └─ parcelStyles.ts     # one source for layer colours, tile URL, zoom limits
    ├─ scene/                 # everything 3D (added Phase 2)
    │  ├─ buildingConfig.ts   # Phase 3: the config type, floor maths, total height
    │  ├─ unitLayout.ts       # Phase 4: ApartmentUnit, the 2 x 2 subdivision, centres
@@ -1030,6 +1380,7 @@ none of them is worth a partial implementation now.
       ├─ BuildingSummary.tsx # building dimensions + property-unit read-out
       └─ PropertyInspector.tsx # Phase 5: the selected unit's cadastral record
                                # Phase 6: the prototype 3D ULPIN block, shown first
+                               # Phase 7: now a real column, no longer a floating overlay
 ```
 
 Deliberately **not** included, to keep the foundation small: no ESLint config, no
@@ -1078,12 +1429,13 @@ own values from it.
 
 ```
 src/
-├─ types/                 # Parcel, Building, Floor, Unit, Ulpin3D
-├─ data/                  # demo dataset + typed loaders
-├─ map/                   # Leaflet components
-├─ scene/                 # Three.js / R3F components
-└─ ui/                    # detail panel, controls, layout
+└─ types/                 # Parcel, Building, Floor, Unit, Ulpin3D
 ```
+
+`data/` and `map/` arrived in Phase 7 and are listed above as built. `types/` is
+still outstanding: `BuildingConfig`, `ApartmentUnit` and `DemoParcel` are
+expected to move there once they stop describing one building on one plot and
+become nodes of `parcel → building → floor → unit`.
 
 `BuildingConfig` and `ApartmentUnit` are expected to move into `types/` once they
 stop describing a lone building and become nodes of
@@ -1099,6 +1451,9 @@ their only consumer; moving them early would be structure without a reason.
 | `@react-three/fiber` | `^9.0.0` | React renderer for Three.js |
 | `@react-three/drei` | `^10.0.0` | R3F helpers; only `OrbitControls` is used so far — the Phase 5 selection outline is plain Three.js (`EdgesGeometry`), not a drei helper |
 | `@types/three` | `^0.180.0` | type definitions for Three.js |
+| `leaflet` | `^1.9.4` | the 2D map engine; ships its own required stylesheet |
+| `react-leaflet` | `^5.0.0` | React binding for Leaflet — v5 is the first line that requires React 19, which is why it matches this project |
+| `@types/leaflet` | `^1.9.12` | type definitions for Leaflet; `react-leaflet` ships its own types but builds on these |
 | `vite` | `^7.0.0` | dev server and production bundler |
 | `@vitejs/plugin-react` | `^5.0.0` | teaches Vite to compile JSX and enable fast refresh |
 | `typescript` | `^5.9.0` | type checking (`tsc --noEmit`, run as part of `npm run build`) |
@@ -1109,7 +1464,7 @@ rather than shipping silently — Vite alone strips types without checking them.
 
 ---
 
-## 8. Why we are building incrementally
+## 9. Why we are building incrementally
 
 The build is split into small phases, and **each phase must leave the project runnable, documented and committed** before the next one starts.
 
