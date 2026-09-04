@@ -1,6 +1,6 @@
 :root {
   --bg: #0b0f14;
-  --panel-border: #1e2a36;
+  --border: #1e2a36;
   --text: #e8eef5;
   --muted: #8ea0b5;
   --accent: #4ade80;
@@ -24,43 +24,62 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
+  overflow: hidden;
 }
 
-.shell {
-  min-height: 100%;
+/* Three rows: header, viewer (takes all remaining height), footer. */
+.app {
+  height: 100%;
   display: grid;
-  place-items: center;
-  padding: 24px;
+  grid-template-rows: auto 1fr auto;
 }
 
-.panel {
-  width: min(100%, 560px);
-  border: 1px solid var(--panel-border);
-  border-radius: 12px;
-  padding: 40px 36px;
-  text-align: center;
+.app-header {
+  padding: 20px 28px 16px;
+  border-bottom: 1px solid var(--border);
 }
 
 .title {
   margin: 0;
-  font-size: clamp(2.25rem, 6vw, 3rem);
+  font-size: 1.5rem;
   font-weight: 600;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.08em;
 }
 
 .subtitle {
-  margin: 12px 0 0;
-  font-size: 1rem;
+  margin: 6px 0 0;
+  font-size: 0.875rem;
   font-weight: 400;
   color: var(--muted);
 }
 
+/* The canvas sizes itself to this element, so it needs a real height.
+   min-height: 0 lets the 1fr row shrink properly inside the grid. */
+.viewer {
+  position: relative;
+  min-height: 0;
+}
+
+.viewer canvas {
+  display: block;
+}
+
+.app-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 12px 28px;
+  border-top: 1px solid var(--border);
+}
+
 .status {
-  margin: 32px 0 0;
+  margin: 0;
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--accent);
@@ -71,4 +90,10 @@ body {
   height: 8px;
   border-radius: 50%;
   background: var(--accent);
+}
+
+.hint {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--muted);
 }

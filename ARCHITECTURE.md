@@ -56,7 +56,78 @@ The prototype is a **single-page browser application with no server**. Everythin
 
 - **Three.js** is the standard WebGL library for 3D in the browser.
 - **React Three Fiber (R3F)** lets the 3D scene be written as React components, so the 3D view and the rest of the UI share the same state and the same mental model instead of being two separate systems.
+- **drei** is a companion library of ready-made helpers for R3F. Phase 2 uses exactly one of them, `OrbitControls`.
 - Buildings are rendered as extruded footprints split into floor slabs; each slab is clickable and maps to a floor-level (or unit-level) ULPIN.
+
+#### How R3F sits between React and Three.js
+
+R3F is **not** a different 3D engine. It is a *renderer* — the same idea as
+`react-dom`, pointed at a different target:
+
+```
+   React                react-dom          →  HTML DOM nodes   (<div>, <p>)
+   (the same
+    component     ──►
+    model)
+                       react-three-fiber   →  Three.js objects (Mesh, Light, Camera)
+```
+
+`react-dom` turns `<div />` into a real DOM element. R3F turns `<mesh />` into a
+real `THREE.Mesh`. Every lowercase tag inside `<Canvas>` maps to a Three.js class
+by name, and its props map to that object's properties:
+
+| JSX written in this repo | Three.js object constructed |
+|---|---|
+| `<mesh position={[0, 4.5, 0]}>` | `new THREE.Mesh()`, then `mesh.position.set(0, 4.5, 0)` |
+| `<boxGeometry args={[3, 9, 3]} />` | `new THREE.BoxGeometry(3, 9, 3)`, attached to the parent mesh |
+| `<meshStandardMaterial color="#5b7286" />` | `new THREE.MeshStandardMaterial({ color: '#5b7286' })` |
+| `<directionalLight intensity={2} />` | `new THREE.DirectionalLight()` with `intensity = 2` |
+
+`args` is the constructor's argument list; every other prop is set on the object
+after construction. Nesting in JSX becomes parent/child nesting in the Three.js
+scene graph, so a child's position is relative to its parent.
+
+**Why this matters for this project:** the 3D view is made of ordinary React
+components, so when a floor or unit is later selected, the same piece of React
+state can drive the 3D scene, the Leaflet map and the detail panel at once.
+Without R3F, the 3D view would be an imperative island that has to be manually
+kept in sync with the rest of the UI.
+
+#### Scene, camera, light, object — the relationship
+
+A 3D frame needs four things, and none of them is optional:
+
+```
+  SCENE ─── the container / coordinate space. Everything else lives inside it.
+    │       Also holds background colour and fog.
+    │
+    ├── CAMERA  the point of view. Position + direction + field of view decide
+    │           which part of the scene lands on screen. Move the camera and
+    │           nothing in the world changes — only what you see.
+    │
+    ├── LIGHTS  MeshStandardMaterial computes colour from light. With no light
+    │           in the scene, every surface renders black — the geometry is
+    │           still there, it is simply unlit.
+    │
+    └── OBJECTS (meshes) each = GEOMETRY (the shape: vertices/faces)
+                              + MATERIAL (how the surface responds to light)
+```
+
+The renderer then does one job, sixty times a second: look at the scene from the
+camera, work out how light falls on each surface, and paint the result into the
+`<canvas>`.
+
+In this repo those four map onto:
+
+| Concept | Where it lives |
+|---|---|
+| Scene | created implicitly by `<Canvas>` in `SceneViewer.tsx` |
+| Camera | `<Canvas camera={{ position: [10, 8, 12], fov: 45 }}>` |
+| Lights | `<ambientLight>` (flat fill) + `<directionalLight>` (sun, casts the shadow) |
+| Objects | `<Building />` (the box) and `<Ground />` (plane + grid) |
+
+`OrbitControls` sits alongside these: it does not add anything to the scene, it
+just listens for mouse events and moves the **camera** around a target point.
 
 ### GIS / 2D map: Leaflet
 
@@ -97,13 +168,22 @@ The prototype is a **single-page browser application with no server**. Everythin
 ├─ vite.config.ts         # Vite config; enables the React plugin
 └─ src/
    ├─ main.tsx            # entry point: mounts <App> into #root
-   ├─ App.tsx             # the whole UI for this phase (title / subtitle / status)
+   ├─ App.tsx             # page shell: header, viewer, footer
    ├─ index.css           # dark theme; global styles
-   └─ vite-env.d.ts       # tells TypeScript about Vite-specific imports (e.g. CSS)
+   ├─ vite-env.d.ts       # tells TypeScript about Vite-specific imports (e.g. CSS)
+   └─ scene/              # everything 3D (added Phase 2)
+      ├─ SceneViewer.tsx  # <Canvas>: camera, lights, fog, OrbitControls
+      ├─ Building.tsx     # one placeholder box, taller than it is wide
+      └─ Ground.tsx       # ground plane + reference grid
 ```
 
 Deliberately **not** included, to keep the foundation small: no ESLint config, no
 `App.css`, and none of the Vite starter assets or demo counter component.
+
+**Why `scene/` is three files, not one.** `SceneViewer` owns the *environment*
+(camera, lights, controls) and `Building` / `Ground` own the *contents*. In Phase 3
+the building becomes a stack of procedurally generated floors — that change should
+touch `Building.tsx` only, and leave the camera and lighting setup untouched.
 
 ### Planned additions (later phases)
 
@@ -122,6 +202,10 @@ src/
 | Package | Range | Role |
 |---|---|---|
 | `react`, `react-dom` | `^19.1.0` | UI library and its browser renderer |
+| `three` | `^0.180.0` | the 3D engine (WebGL) |
+| `@react-three/fiber` | `^9.0.0` | React renderer for Three.js |
+| `@react-three/drei` | `^10.0.0` | R3F helpers; only `OrbitControls` is used so far |
+| `@types/three` | `^0.180.0` | type definitions for Three.js |
 | `vite` | `^7.0.0` | dev server and production bundler |
 | `@vitejs/plugin-react` | `^5.0.0` | teaches Vite to compile JSX and enable fast refresh |
 | `typescript` | `^5.9.0` | type checking (`tsc --noEmit`, run as part of `npm run build`) |
