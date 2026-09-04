@@ -4,7 +4,7 @@
 
 **Goal:** SIH prototype for 3D ULPIN and vertical property mapping — a demonstrable system that extends the flat, parcel-level ULPIN idea into three dimensions so that individual floors/units in a vertical building can each be identified, located and inspected.
 
-**Current phase:** Phase 3 – procedural floors
+**Current phase:** Phase 4 – apartment subdivision
 
 **Local repo path:** `C:\Users\Admin\Projects\3d-ulpin`
 
@@ -85,7 +85,7 @@ Untouched: `main.tsx`, `index.html`, `package.json`, `tsconfig.json`, `vite.conf
 
 **Not committed.** Phase 3 is working-tree state only, as instructed.
 
-## Local verification required
+## Local verification required — Phase 3 (still open)
 
 `node_modules/` and `package-lock.json` are now present in the repo, so `npm install`
 appears to have been run since the Phase 2 note was written — but **this session has
@@ -116,6 +116,68 @@ viewport reads *5 floors · 3.0 m · 15.0 m · 18 × 14 m*. Left-drag orbits, sc
 zooms, right-drag pans, and the whole building casts one shadow across the grid —
 each grid square being one metre, the building should span 18 squares by 14.
 
+*Superseded by Phase 4:* the slabs described above no longer exist — each floor is now
+four boxes. The block's outer dimensions, the panel's first four rows and the camera
+behaviour are unchanged, so everything else in this section still applies.
+
+## Completed — Phase 4 (apartment subdivision) — *source complete, unverified locally*
+
+- [x] `src/scene/unitLayout.ts` (**new**) — typed `ApartmentUnit` model with `id`, `floorLevel`, `indexOnFloor`, `unitNumber`, `column`, `row`, `xMin`/`xMax`, `yMin`/`yMax`, `zMin`/`zMax`, `width`, `depth`, `height`, `areaSqM`, `volumeCubicM`. No React, no Three.js — property description only, like `buildingConfig.ts`.
+- [x] `BuildingConfig` **extended, not duplicated**: two new fields `unitColumns: 2` and `unitRows: 2`. The 2 × 2 grid is configuration, not a constant buried in a renderer. `getUnitsPerFloor()` and `getTotalUnits()` derive 4 and 20 from it.
+- [x] **Every above-ground floor subdivided into 4 units** on a 2 × 2 grid: `unitWidth = width / unitColumns` = 9 m, `unitDepth = depth / unitRows` = 7 m → **63 m² and 189 m³ per unit**, 20 units in the building.
+- [x] **Units generated procedurally** by `buildApartmentUnits(config, floors)` — a nested loop over the floor layouts. No hard-coded apartment list, no hand-placed meshes. Changing `unitColumns` to 3 gives 15 units of 6 × 7 m with no code edit.
+- [x] **Naming** `floor` + zero-padded index: 101–104, 201–204, 301–304, 401–404, 501–504. Padding keeps them sortable and unambiguous past nine units per floor.
+- [x] **One separate mesh per unit** (20 meshes), each with `name={unit.id}`, so a unit is an addressable object ready for Phase 5 picking rather than a stripe on a box.
+- [x] **Vertical bounds inherited from the floor, never recomputed**: a unit's `yMin`/`yMax` are its `FloorLayout`'s `baseY`/`topY`. Floor 3 units are exactly `yMin = 6`, `yMax = 9`. A unit cannot disagree with its floor.
+- [x] **Mesh centres derived from bounds** via `getUnitCenter()` — `(min + max) / 2` per axis, a function rather than a stored field, so there is one description of where a unit is. Floor 3: centres at y = 7.5 m, x = ±4.5 m, z = ±3.5 m.
+- [x] **Phase 3 full-floor slab meshes removed entirely** from `Building.tsx`. The units now fill the building volume; keeping the slabs would put an opaque box inside every apartment. No separate slab geometry was added — the inter-unit structure is the visual gap below, which cannot overlap anything.
+- [x] Units kept distinguishable **restrainedly**: the same two near-identical shades as Phase 3 (`#5b7286` / `#4d6376`) alternated as a 3D checkerboard on `(column + row + floorIndex) % 2`, so no unit touches another of the same shade in any direction — plus the **0.06 m** sliver shaved off each box's *geometry size only*, now in all three axes, applied symmetrically so every mesh centre stays exact. No random bright colours; colour is being saved for selection state.
+- [x] `src/ui/BuildingSummary.tsx` — new **Property units** section reading **20 vertical units · 4 per floor (2 × 2) · 9 × 7 m · 63 m² · 189 m³**. The counts come from `config`; the per-unit figures are read off the *same generated `ApartmentUnit[]` the scene renders*, not retyped.
+- [x] `src/index.css` — divider rule for the panel's second heading; panel `min-width` 190 → 218 px for the longer rows. Layout otherwise unchanged.
+- [x] `src/App.tsx` — footer status now reads **Vertical Property Units Active**.
+- [x] **OrbitControls, camera, lighting and shadows untouched** — `SceneViewer.tsx` and `Ground.tsx` were not modified at all. The building's outer envelope is unchanged, so the framing still fits.
+- [x] Still no click selection, no property inspector, no ULPIN generation, no GIS, no topology validation, no AI, no backend, no basement, no deployment changes — all deliberately out of scope for this phase.
+
+## Files changed in Phase 4
+
+| File | Change |
+|---|---|
+| `src/scene/unitLayout.ts` | **new** — `ApartmentUnit`, `buildApartmentUnits()`, `getUnitCenter()` |
+| `src/scene/buildingConfig.ts` | `unitColumns` / `unitRows` added to `BuildingConfig` and the default config; `getUnitsPerFloor()` and `getTotalUnits()` added |
+| `src/scene/Building.tsx` | rewritten — full-floor slabs removed; renders one mesh per unit, centre derived from bounds |
+| `src/ui/BuildingSummary.tsx` | new **Property units** section, values from the generated units |
+| `src/index.css` | secondary-heading divider; panel `min-width` widened |
+| `src/App.tsx` | footer status text |
+| `ARCHITECTURE.md` | new section 4 "The property-unit model"; sections renumbered, §2/§3 and the repo tree updated |
+| `PROJECT_STATUS.md` | this update |
+
+Untouched: `SceneViewer.tsx`, `Ground.tsx`, `main.tsx`, `vite-env.d.ts`, `index.html`, `package.json`, `tsconfig.json`, `vite.config.ts`, `.gitignore`. **No new dependencies were added in Phase 4.**
+
+**Not committed.** Phase 4 is working-tree state only, as instructed.
+
+## Local verification required — Phase 4
+
+This session has **no shell on this machine**, so nothing below is confirmed:
+
+- [ ] `npm run dev` — **must be run by the developer**
+- [ ] `npm run build` (`tsc --noEmit && vite build`) — **must be run by the developer**
+
+**What was verified for Phase 4, in the cloud sandbox:**
+
+- All sources parsed with `tsc` in `strict` mode with module resolution disabled (the dependencies cannot be installed there — the registry is blocked by the sandbox's proxy policy) — no syntax, JSX or type-structure errors of our own.
+- `buildingConfig.ts` and `unitLayout.ts` were compiled and **executed**, and the generated data checked against the specification. All assertions passed:
+  - 20 units total, 4 per floor; `getTotalUnits()` = 20
+  - unit numbers exactly `101–104, 201–204, 301–304, 401–404, 501–504`, all 20 ids unique
+  - every unit 9 × 7 × 3 m → **63 m²**, **189 m³**
+  - floor 3 units: `yMin = 6`, `yMax = 9` for all four
+  - floor 3 bounds and derived centres: `301` x[−9,0] z[−7,0] → (−4.5, 7.5, −3.5); `302` x[0,9] z[−7,0] → (4.5, 7.5, −3.5); `303` x[−9,0] z[0,7] → (−4.5, 7.5, 3.5); `304` x[0,9] z[0,7] → (4.5, 7.5, 3.5)
+  - the four units **tile the floor exactly**: areas sum to 252 m² = 18 × 14 m, x extent −9…+9, z extent −7…+7, and a pairwise interval test found **zero overlaps**
+  - total building volume 3 780 m³ = 18 × 14 × 15 m
+
+**What that does not prove:** that the R3F/drei props type-check against the real `@types/three`, that the bundle builds, or that the scene renders.
+
+**What a correct Phase 4 result looks like in the browser:** the same 18 × 14 × 15 m block as Phase 3, but now visibly built from **20 boxes** — four per floor, in a 2 × 2 arrangement, each 9 m wide and 7 m deep, with thin dark seams running both vertically (between floors) and along the two centre lines of the footprint. Adjacent boxes differ slightly in shade in every direction, and no box is brightly coloured. The top-left panel reads *5 floors · 3.0 m · 15.0 m · 18 × 14 m*, then *20 vertical units · 4 per floor (2 × 2) · 9 × 7 m · 63 m² · 189 m³*. Left-drag still orbits, scroll zooms, right-drag pans. Nothing responds to a click — that is Phase 5.
+
 ## Commands to run locally
 
 From `C:\Users\Admin\Projects\3d-ulpin`:
@@ -130,13 +192,14 @@ npm run typecheck    # type-check only, no bundle
 
 ## Next phase
 
-**Phase 4 – apartment subdivision.** Expected scope:
+**Phase 5 – click selection + property inspector.** Expected scope:
 
-1. Subdivide each floor into apartment units, generated from the same configuration model (units per floor, and how a floor's 18 × 14 m footprint is partitioned).
-2. One mesh per unit, so a unit — like a floor today — is an addressable object rather than a decoration.
-3. Extend `BuildingConfig` rather than introducing a second source of dimensions; the metre convention and the base-vs-centre rule carry over unchanged.
-4. Still no clickable selection, no metadata, no GIS and no ULPIN generation — those come after the geometry is right.
-5. Confirm it renders in dev **and** survives `npm run build`.
+1. Make a unit mesh clickable — R3F's `onClick` raycast resolves the hit to a mesh, and because each mesh *is* one `ApartmentUnit`, the handler gets `unit.id` directly.
+2. Hold the selected unit's id in React state, shared by the scene and the panel — the "state layer" of the architecture, appearing for the first time.
+3. A property inspector panel showing the selected unit's `unitNumber`, `floorLevel`, bounds, `areaSqM` and `volumeCubicM` — all values already generated in Phase 4, so the panel reads them rather than computing anything.
+4. Selection made visible in 3D: a distinct material on the selected unit. This is what the restrained Phase 4 palette was reserving colour for.
+5. Still no ULPIN generation, no GIS, no backend — the identifier format is the phase after.
+6. Confirm it renders in dev **and** survives `npm run build`.
 
 ## Known issues
 
@@ -145,8 +208,10 @@ npm run typecheck    # type-check only, no bundle
 - **`three` and `@types/three` must stay on the same minor.** Three.js ships breaking changes between `0.x` releases, so if one is bumped the other must be bumped to match.
 - **No `package-lock.json` yet.** Created by the first `npm install`; should be committed so Vercel builds reproducibly.
 - No Git remote configured, so nothing can be pushed and deployment is not wired up.
-- Nothing has been committed to Git at all yet — the whole of Phases 0–3 is still uncommitted working-tree state. Worth committing as soon as the build passes.
-- **The 0.06 m slab gap is cosmetic and must stay that way.** It is subtracted from the slab's geometry height symmetrically, so it never moves a mesh centre. If a later phase needs real slab thickness or floor-to-ceiling clearance, that belongs in `BuildingConfig` as its own field, not in the visual constant.
+- Nothing has been committed to Git at all yet — the whole of Phases 0–4 is still uncommitted working-tree state. Worth committing as soon as the build passes.
+- **The 0.06 m visual gap is cosmetic and must stay that way.** It is subtracted from each unit box's geometry size symmetrically, in all three axes, so it never moves a mesh centre. If a later phase needs real slab thickness, wall thickness or floor-to-ceiling clearance, that belongs in `BuildingConfig` as its own field, not in the visual constant.
+- **The unit grid is uniform by assumption.** Every floor is cut the same way and every unit is identical, which is why the summary panel can describe all 20 from `units[0]`. Real buildings have differently sized flats and floors that differ from each other; when that arrives, `buildApartmentUnits` needs a per-floor partition rather than one grid, and the panel needs a range rather than a single figure.
+- **Unit numbering assumes fewer than 100 units per floor.** `unitNumber` is `floorLevel` + a 2-digit index, so floor 1 unit 100 would collide with floor 11 unit 0. Fine for the prototype; worth noting before the ULPIN format is fixed.
 - The demo dataset (buildings, floors, units, coordinates) does not exist yet.
 - The 3D ULPIN identifier format is still undecided — which fields, in what order, and how the vertical component is encoded. Should be settled before the data model is written.
 
@@ -154,15 +219,20 @@ npm run typecheck    # type-check only, no bundle
 
 - **Verified on:** 2026-09-04
 - **What was verified:**
-  - Phase 3 sources written into the working tree: `src/scene/buildingConfig.ts` and
-    `src/ui/BuildingSummary.tsx` added; `Building.tsx`, `SceneViewer.tsx`, `Ground.tsx`,
-    `App.tsx` and `index.css` updated.
-  - The Phase 2 single-box building implementation is gone — no stray `HEIGHT`/`WIDTH`
-    constants and no hand-placed mesh remain in `Building.tsx`.
-  - All sources parse cleanly under `tsc --strict`; `buildingConfig.ts` was executed and
-    its floor elevations, centres, total height and footprint match the specification exactly.
+  - Phase 4 sources written into the working tree: `src/scene/unitLayout.ts` added;
+    `buildingConfig.ts`, `Building.tsx`, `BuildingSummary.tsx`, `index.css` and `App.tsx`
+    updated. `SceneViewer.tsx` and `Ground.tsx` deliberately untouched.
+  - The Phase 3 full-floor slab implementation is gone — `Building.tsx` contains no
+    per-floor mesh and no `SLAB_VISUAL_GAP`; it maps over `ApartmentUnit[]` only.
+  - All sources parse cleanly under `tsc --strict` (module resolution disabled; the
+    sandbox's proxy blocks the npm registry, so the real dependency types could not be
+    installed there).
+  - `buildingConfig.ts` + `unitLayout.ts` were compiled and **executed**: 20 units,
+    4 per floor, numbering 101–504, 9 × 7 × 3 m, 63 m², 189 m³, floor 3 at y 6–9 m with
+    centres at 7.5 m, exact tiling of the 18 × 14 m footprint with zero overlaps, and a
+    total volume of 3 780 m³. Every assertion passed.
   - **No dependency install and no bundle build were run or observed by this session** —
     it has no shell on this machine.
-- **Conclusion:** Phase 3 **source complete**, build and render **not yet verified**.
-  Phase 3 stays open until `npm run build` succeeds and the five stacked floors are seen
-  in the browser. Nothing has been committed.
+- **Conclusion:** Phase 4 **source complete**, build and render **not yet verified**.
+  Phases 3 and 4 both stay open until `npm run build` succeeds and the 20 unit boxes are
+  seen in the browser. Nothing has been committed.

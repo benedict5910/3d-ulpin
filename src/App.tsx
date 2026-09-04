@@ -18,7 +18,7 @@ function App() {
       <footer className="app-footer">
         <p className="status">
           <span className="status-dot" aria-hidden="true" />
-          Procedural Floors Active
+          Vertical Property Units Active
         </p>
         <p className="hint">Drag to orbit · Scroll to zoom · Right-drag to pan</p>
       </footer>

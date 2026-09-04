@@ -70,7 +70,7 @@ body {
   position: absolute;
   top: 16px;
   left: 16px;
-  min-width: 190px;
+  min-width: 218px;
   padding: 14px 16px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -87,6 +87,13 @@ body {
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--muted);
+}
+
+/* The second heading in the panel: separated by a rule, not by extra chrome. */
+.summary-title-secondary {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
 }
 
 .summary-list {

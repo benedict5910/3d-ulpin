@@ -21,14 +21,25 @@ export interface BuildingConfig {
   readonly numberOfFloors: number
   /** Floor-to-floor height, in metres. Uniform for every floor. */
   readonly floorHeight: number
+  /**
+   * How many property units each floor is cut into along X (the width axis).
+   * Part of the config, not of the geometry code, so the partition can change
+   * without touching a renderer.
+   */
+  readonly unitColumns: number
+  /** How many property units each floor is cut into along Z (the depth axis). */
+  readonly unitRows: number
 }
 
-/** The one building the Phase 3 prototype shows. */
+/** The one building the prototype shows. */
 export const DEFAULT_BUILDING_CONFIG: BuildingConfig = {
   width: 18,
   depth: 14,
   numberOfFloors: 5,
   floorHeight: 3,
+  // A 2 x 2 grid: four units per floor, twenty in the building.
+  unitColumns: 2,
+  unitRows: 2,
 }
 
 /**
@@ -90,4 +101,23 @@ export function buildFloorLayouts(config: BuildingConfig): FloorLayout[] {
  */
 export function getTotalHeight(config: BuildingConfig): number {
   return config.numberOfFloors * config.floorHeight
+}
+
+/**
+ * How many property units sit on one floor, in metres-free integer terms.
+ *
+ * Derived from the grid, never stored: `unitColumns * unitRows`. With a 2 x 2
+ * grid that is 4.
+ */
+export function getUnitsPerFloor(config: BuildingConfig): number {
+  return config.unitColumns * config.unitRows
+}
+
+/**
+ * How many property units the whole building contains.
+ *
+ * `numberOfFloors * unitsPerFloor` — 5 x 4 = 20 for the default config.
+ */
+export function getTotalUnits(config: BuildingConfig): number {
+  return config.numberOfFloors * getUnitsPerFloor(config)
 }

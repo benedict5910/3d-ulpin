@@ -57,7 +57,7 @@ The prototype is a **single-page browser application with no server**. Everythin
 - **Three.js** is the standard WebGL library for 3D in the browser.
 - **React Three Fiber (R3F)** lets the 3D scene be written as React components, so the 3D view and the rest of the UI share the same state and the same mental model instead of being two separate systems.
 - **drei** is a companion library of ready-made helpers for R3F. So far exactly one of them is used, `OrbitControls`.
-- Buildings are rendered as footprints split into floor slabs — one mesh per floor as of Phase 3 — so that each slab can later be made clickable and mapped to a floor-level (or unit-level) ULPIN.
+- Buildings are rendered as footprints split vertically into floors and horizontally into property units — **one mesh per unit as of Phase 4** — so that each unit can later be made clickable and mapped to its own unit-level ULPIN.
 
 #### How R3F sits between React and Three.js
 
@@ -124,7 +124,7 @@ In this repo those four map onto:
 | Scene | created implicitly by `<Canvas>` in `SceneViewer.tsx` |
 | Camera | `<Canvas camera={{ position: [10, 8, 12], fov: 45 }}>` |
 | Lights | `<ambientLight>` (flat fill) + `<directionalLight>` (sun, casts the shadow) |
-| Objects | `<Building />` (the generated floor stack) and `<Ground />` (plane + grid) |
+| Objects | `<Building />` (the generated stack of unit meshes) and `<Ground />` (plane + grid) |
 
 `OrbitControls` sits alongside these: it does not add anything to the scene, it
 just listens for mouse events and moves the **camera** around a target point.
@@ -185,10 +185,13 @@ interface BuildingConfig {
   depth: number           // metres, along Z
   numberOfFloors: number
   floorHeight: number     // metres, floor-to-floor, uniform
+  unitColumns: number     // Phase 4: units per floor along X
+  unitRows: number        // Phase 4: units per floor along Z
 }
 
 const DEFAULT_BUILDING_CONFIG = {
   width: 18, depth: 14, numberOfFloors: 5, floorHeight: 3,
+  unitColumns: 2, unitRows: 2,
 }
 ```
 
@@ -200,6 +203,8 @@ Everything else about the building is **derived**, never stored alongside it:
 | `floorCenterY` | `floorBaseY + floorHeight / 2` | 1.5, 4.5, 7.5, 10.5, 13.5 m |
 | `topY` | `floorBaseY + floorHeight` | 3, 6, 9, 12, 15 m |
 | total height | `numberOfFloors * floorHeight` | 15.0 m |
+| units per floor | `unitColumns * unitRows` | 4 |
+| total units | `numberOfFloors * unitsPerFloor` | 20 |
 
 Storing a derived value would create a second place that has to be kept in step
 with the first, and the two would eventually disagree — a rendered building of
@@ -208,29 +213,25 @@ unrepresentable.
 
 ### 3.3 Procedural floor generation
 
-`Building.tsx` places nothing by hand. It reads the config, calls
-`buildFloorLayouts(config)` for the elevations, and maps the resulting array to
-one `<mesh>` per floor:
+`Building.tsx` places nothing by hand. It reads the config and calls
+`buildFloorLayouts(config)`, which returns one `FloorLayout` per floor — the
+vertical slicing of the building, and nothing else.
 
 ```
-BuildingConfig  ──►  buildFloorLayouts()  ──►  FloorLayout[]  ──►  one <mesh> each
- (4 numbers)          the loop + maths        base/top/centre     the geometry
+BuildingConfig  ──►  buildFloorLayouts()  ──►  FloorLayout[]
+ (6 numbers)          the loop + maths        base/top/centre per floor
 ```
 
-Each floor is a **separate mesh**, not a subdivided single box. That is a
-deliberate structural decision rather than a rendering detail: in Phase 4 a
-floor has to be individually addressable — selectable, colourable, and mapped to
-its own floor-level ULPIN. An object that already exists per floor can be given
-an identity; a decorative stripe on one tall box cannot.
+In Phase 3 each `FloorLayout` became one slab mesh. As of Phase 4 it is an
+**intermediate result**: the floors define the vertical extent, and §4 subdivides
+each one horizontally into the property units that are actually rendered. The
+floor maths is unchanged — a unit's `yMin`/`yMax` are its floor's `baseY`/`topY`,
+copied verbatim.
 
 Changing `numberOfFloors` to 12 produces a twelve-storey building, correct
 elevations, correct total height and a correct summary panel, with **no edit to
 `Building.tsx` at all**. That is the test of whether the generation is genuinely
 procedural.
-
-Two restrained touches keep adjacent floors readable without adding meaning:
-alternating near-identical shades (`#5b7286` / `#4d6376`), and a 0.06 m sliver
-shaved off each slab's *geometry height* so the joints read as lines.
 
 ### 3.4 Floor base vs mesh centre — why they differ
 
@@ -259,16 +260,205 @@ So the code keeps both, and keeps them separate:
 - **`centerY`** — a rendering detail, computed as `baseY + floorHeight / 2`,
   existing only because of how Three.js anchors a box.
 
-The 0.06 m visual gap is applied to the slab's *height* symmetrically, so the
+The 0.06 m visual gap is applied to the box's *size* symmetrically, so the
 centre is unmoved: floor 3 still occupies exactly 6–9 m in the model even though
-its visible slab is 2.94 m tall. **The pixels are allowed to differ from the
+its visible geometry is 2.94 m tall. **The pixels are allowed to differ from the
 model; the model is not allowed to drift.**
+
+The same rule governs the units in §4, in all three axes.
 
 ---
 
-## 4. Repository shape
+## 4. The property-unit model (Phase 4)
 
-### As built (Phases 1–3 — this exists now)
+Phase 3 gave the building floors. Phase 4 gives it **properties**: each
+above-ground floor is subdivided into four independent 3D units, so the thing on
+screen is no longer a storey but an apartment — the object a 3D ULPIN will
+actually identify.
+
+### 4.1 The `ApartmentUnit` model
+
+`src/scene/unitLayout.ts` is the second pure-data module, alongside
+`buildingConfig.ts`: no React, no Three.js, only a description of property.
+
+```ts
+interface ApartmentUnit {
+  id: string            // "unit-301" — unique within the building
+  floorLevel: number    // 3        (1-based, ground floor is 1)
+  indexOnFloor: number  // 1        (1-based, within its own floor)
+  unitNumber: string    // "301"    (the door number)
+  column: number        // 0        (0-based grid coordinate along X)
+  row: number           // 0        (0-based grid coordinate along Z)
+
+  xMin: number; xMax: number   // -9 → 0   metres, along X (width)
+  yMin: number; yMax: number   //  6 → 9   metres above ground (height)
+  zMin: number; zMax: number   // -7 → 0   metres, along Z (depth)
+
+  width: number         // 9   m    = xMax - xMin
+  depth: number         // 7   m    = zMax - zMin
+  height: number        // 3   m    = yMax - yMin
+  areaSqM: number       // 63  m²   = width * depth
+  volumeCubicM: number  // 189 m³   = areaSqM * height
+}
+```
+
+**Why six bounds rather than a centre and a size.** Bounds are what a register
+records — "this property occupies 0–9 m east, 6–9 m up". They also compose:
+two units are adjacent exactly when one's `max` equals the other's `min`, a unit
+is inside a floor exactly when its `yMin`/`yMax` fall within the floor's, and two
+units overlap exactly when their intervals overlap on all three axes. Every one
+of those is a comparison of numbers already present. Store a centre and a size
+instead and each of those questions has to reconstruct the bounds first — and a
+future ULPIN, GIS export or topology check would each reconstruct them
+separately, which is three chances to disagree.
+
+`width` / `depth` / `height` / `areaSqM` / `volumeCubicM` *are* derivable from
+the bounds, and are stored anyway — but only because they are the values every
+consumer wants and computing them once, in the module that owns the bounds,
+means no consumer subtracts a pair of coordinates by hand. The centre is
+deliberately **not** stored (see §4.3).
+
+### 4.2 How a floor becomes four units
+
+The subdivision is a plain 2D grid over the floor's footprint —
+`unitColumns` cells along X, `unitRows` along Z — taken from the same
+`BuildingConfig` as everything else. The building is centred on the origin, so
+the footprint runs from `−width / 2` to `+width / 2` and from `−depth / 2` to
+`+depth / 2`, and a cell's bounds are offsets into that:
+
+```
+  unitWidth = width / unitColumns          18 / 2 = 9 m
+  unitDepth = depth / unitRows             14 / 2 = 7 m
+
+  xMin = -width / 2 + column * unitWidth   xMax = xMin + unitWidth
+  zMin = -depth / 2 + row    * unitDepth   zMax = zMin + unitDepth
+  yMin = floor.baseY                       yMax = floor.topY     ← inherited
+```
+
+Floor 3 (`baseY` 6 m, `topY` 9 m) therefore produces:
+
+```
+            z = -7                z = 0                 z = +7
+  x = -9   ┌────────────────────┬────────────────────┐
+           │  301               │  303               │   each 9 × 7 m
+           │  x[-9, 0] z[-7, 0] │  x[-9, 0] z[0, 7]  │   y[6, 9] for all four
+  x =  0   ├────────────────────┼────────────────────┤   63 m²   189 m³
+           │  302               │  304               │
+           │  x[0, 9] z[-7, 0]  │  x[0, 9] z[0, 7]   │
+  x = +9   └────────────────────┴────────────────────┘
+```
+
+Two properties of this are worth stating because they are what make the
+subdivision *correct* rather than merely plausible:
+
+- **The vertical bounds are not computed here.** They are copied from the floor
+  the unit belongs to. A unit therefore cannot disagree with its floor about
+  which 3 m slice of the building it occupies — the disagreement is not
+  representable.
+- **The four units tile the floor exactly.** 4 × 63 m² = 252 m² = 18 × 14 m,
+  with no gap and no overlap, because each cell starts precisely where the
+  previous one ended. Executed and checked: see PROJECT_STATUS.md.
+
+Naming follows the ordinary Indian convention `floor` + `unit`, zero-padded to
+two digits: floor 1 gives 101–104, floor 5 gives 501–504. The padding is not
+cosmetic — it keeps the numbers sortable and unambiguous once a floor holds more
+than nine units.
+
+The generation itself is one nested loop over `FloorLayout[]`:
+
+```
+BuildingConfig ──► buildFloorLayouts() ──► FloorLayout[] ──► buildApartmentUnits()
+ (6 numbers)        vertical slicing        5 floors          horizontal slicing
+                                                                     │
+                                                                     ▼
+                                                            ApartmentUnit[]  (20)
+```
+
+Twenty units exist because the config says five floors of a 2 × 2 grid. Nothing
+is hard-coded: setting `unitColumns` to 3 gives 15 units of 6 × 7 m, and
+`numberOfFloors` to 12 gives 48 units, with no edit to `unitLayout.ts`,
+`Building.tsx` or the summary panel.
+
+### 4.3 From bounds to mesh centre
+
+`BoxGeometry` is built centred on its own origin, so `mesh.position` places a
+box's **centre**. The unit model stores corners. `getUnitCenter(unit)` bridges
+the two, and is the only place the conversion is written:
+
+```ts
+centerX = (xMin + xMax) / 2      // (-9 + 0) / 2  = -4.5
+centerY = (yMin + yMax) / 2      // ( 6 + 9) / 2  =  7.5
+centerZ = (zMin + zMax) / 2      // (-7 + 0) / 2  = -3.5
+```
+
+It is a **function, not a field**. Storing the centre alongside the bounds would
+put the same fact in two places, and the pair would eventually drift — an edit
+that moves a wall would have to remember to move the centre too. Deriving it
+means a unit has exactly one description of where it is, and the renderer asks
+for the form it needs at the moment it needs it. This is the same
+logical-vs-rendering split Phase 3 drew between `baseY`/`topY` and `centerY`,
+now in all three axes:
+
+> **`xMin`…`zMax` are what the cadastre records. The centre is how Three.js
+> happens to want it.**
+
+### 4.4 Why each unit is a separate mesh
+
+Twenty meshes cost more than one, and the geometry could have been merged. It is
+not, for one reason: **an apartment is the unit of ownership, so it has to be an
+object.**
+
+- A mesh can be picked. Phase 5 raycasts a click to a mesh; a mesh that *is* a
+  unit resolves straight to `unit.id`. A merged box would give a triangle index,
+  from which the unit would have to be reverse-engineered by comparing the hit
+  point against every unit's bounds — solving a problem the geometry had already
+  solved and then thrown away.
+- A mesh can carry state. Selection highlighting, hover, per-unit colouring by an
+  attribute (vacant / registered / disputed) are all one material on one object.
+- A mesh can carry identity. `name={unit.id}` means the scene graph itself knows
+  which apartment is which — inspectable in the browser, and directly mappable to
+  the unit-level ULPIN the project exists to demonstrate.
+
+This is the same argument Phase 3 made for one mesh per floor, one level further
+down, and it is why Phase 4 **removed** the full-floor slabs rather than keeping
+them underneath. The units now fill the entire building volume; rendering the old
+slabs as well would put an opaque box inside every apartment, z-fighting with it
+and hiding the very subdivision the phase exists to show. There is no separate
+slab geometry: the visible structure between floors and between neighbours is the
+0.06 m gap shaved off each unit box, which is cheaper than extra meshes and
+cannot overlap anything.
+
+### 4.5 How this connects to a vertical cadastre
+
+A conventional cadastre is a set of 2D polygons: a parcel has a boundary, an
+owner and an identifier, and everything above and below it is implicitly the same
+property. That model cannot describe a tower, where twenty owners share one
+footprint and are distinguished only by elevation.
+
+The unit model is the smallest honest fix: each property carries its own
+**3D extent**, and the vertical interval is a first-class part of it rather than
+an afterthought. From that, everything a vertical register needs follows:
+
+| Registry question | Answered by |
+|---|---|
+| Where is this property? | `xMin…zMax` — a 3D envelope, not a footprint |
+| How big is it? | `areaSqM` for a deed, `volumeCubicM` for air rights |
+| Which floor is it on? | `floorLevel`, and independently `yMin`/`yMax` |
+| What is it called? | `unitNumber` — the door number an owner recognises |
+| Do two claims collide? | interval overlap on all three axes |
+| What is its 3D ULPIN? | parcel + building + `floorLevel` + `unitNumber` (Phase 6+) |
+
+The last row is the point of the project. A flat ULPIN identifies the parcel this
+building stands on; the vertical component that turns it into a 3D ULPIN is
+exactly the floor-and-unit pair this phase generates, and the bounds are what
+makes that identifier *resolvable* to a real volume of space rather than just a
+label.
+
+---
+
+## 5. Repository shape
+
+### As built (Phases 1–4 — this exists now)
 
 ```
 3d-ulpin/
@@ -286,22 +476,36 @@ model; the model is not allowed to drift.**
    ├─ vite-env.d.ts          # tells TypeScript about Vite-specific imports (e.g. CSS)
    ├─ scene/                 # everything 3D (added Phase 2)
    │  ├─ buildingConfig.ts   # Phase 3: the config type, floor maths, total height
+   │  ├─ unitLayout.ts       # Phase 4: ApartmentUnit, the 2 x 2 subdivision, centres
    │  ├─ SceneViewer.tsx     # <Canvas>: camera, lights, fog, OrbitControls
-   │  ├─ Building.tsx        # Phase 3: generates one mesh per floor from the config
+   │  ├─ Building.tsx        # Phase 4: generates one mesh per property unit
    │  └─ Ground.tsx          # ground plane + 1 m reference grid
    └─ ui/                    # HTML overlays and panels (added Phase 3)
-      └─ BuildingSummary.tsx # floors / floor height / total height / footprint
+      └─ BuildingSummary.tsx # building dimensions + property-unit read-out
 ```
 
 Deliberately **not** included, to keep the foundation small: no ESLint config, no
 `App.css`, and none of the Vite starter assets or demo counter component.
 
 **Why `scene/` is split.** `SceneViewer` owns the *environment* (camera, lights,
-controls), `Building` / `Ground` own the *contents*, and `buildingConfig.ts` owns
-the *numbers*. Phase 3 proved the split works: replacing the placeholder box with
-a generated floor stack touched `Building.tsx` and added one data module; the
-camera and lighting code only changed to re-frame a larger subject, and it did so
-by reading the same config rather than by hand-tuned constants.
+controls), `Building` / `Ground` own the *contents*, and `buildingConfig.ts` /
+`unitLayout.ts` own the *numbers*. Phase 3 proved the split works: replacing the
+placeholder box with a generated floor stack touched `Building.tsx` and added one
+data module; the camera and lighting code only changed to re-frame a larger
+subject, and it did so by reading the same config rather than by hand-tuned
+constants. Phase 4 proved it again at a smaller cost: subdividing every floor
+added one data module and rewrote one component's render body, and
+`SceneViewer.tsx` and `Ground.tsx` were not touched at all — the building's
+outer envelope did not change, only what it is made of.
+
+**Why the unit maths is a second module, not more of `buildingConfig.ts`.**
+The config describes *the building* — six numbers an architect would give you.
+`unitLayout.ts` describes *the properties inside it* — the objects a registry
+owns. They change for different reasons and will end up in different places:
+`BuildingConfig` is headed for `types/` as one node of
+`parcel → building → floor → unit`, while `ApartmentUnit` is what the ULPIN
+encoder, the detail panel and any GIS export will consume. Splitting them now
+costs one import and keeps that seam visible.
 
 **Why `BuildingSummary` lives in `ui/`, not `scene/`.** It is HTML positioned over
 the canvas, not a 3D object. Keeping the boundary strict means the 3D code never
@@ -320,10 +524,10 @@ src/
 └─ ui/                    # detail panel, controls, layout
 ```
 
-`BuildingConfig` is expected to move into `types/` once it stops being a lone
-building and becomes one node of `parcel → building → floor → unit`. It sits in
-`scene/` for now because that is its only consumer; moving it early would be
-structure without a reason.
+`BuildingConfig` and `ApartmentUnit` are expected to move into `types/` once they
+stop describing a lone building and become nodes of
+`parcel → building → floor → unit`. They sit in `scene/` for now because that is
+their only consumer; moving them early would be structure without a reason.
 
 ### Toolchain as pinned in `package.json`
 
@@ -344,7 +548,7 @@ rather than shipping silently — Vite alone strips types without checking them.
 
 ---
 
-## 5. Why we are building incrementally
+## 6. Why we are building incrementally
 
 The build is split into small phases, and **each phase must leave the project runnable, documented and committed** before the next one starts.
 
