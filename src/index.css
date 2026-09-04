@@ -1,5 +1,6 @@
 :root {
   --bg: #0b0f14;
+  --panel: rgba(13, 19, 26, 0.82);
   --border: #1e2a36;
   --text: #e8eef5;
   --muted: #8ea0b5;
@@ -62,6 +63,53 @@ body {
 
 .viewer canvas {
   display: block;
+}
+
+/* Building summary — an HTML panel floating over the 3D canvas. */
+.building-summary {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  min-width: 190px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  backdrop-filter: blur(6px);
+  /* Purely informational, so it must not swallow orbit/zoom drags. */
+  pointer-events: none;
+}
+
+.summary-title {
+  margin: 0 0 10px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.summary-list {
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.summary-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 18px;
+  font-size: 0.8125rem;
+}
+
+.summary-row dt {
+  color: var(--muted);
+}
+
+.summary-row dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
 }
 
 .app-footer {

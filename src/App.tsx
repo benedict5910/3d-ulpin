@@ -1,4 +1,5 @@
 import SceneViewer from './scene/SceneViewer'
+import BuildingSummary from './ui/BuildingSummary'
 
 function App() {
   return (
@@ -10,12 +11,14 @@ function App() {
 
       <main className="viewer">
         <SceneViewer />
+        {/* HTML overlay, not 3D — it sits above the canvas, not inside it. */}
+        <BuildingSummary />
       </main>
 
       <footer className="app-footer">
         <p className="status">
           <span className="status-dot" aria-hidden="true" />
-          Prototype Environment Ready
+          Procedural Floors Active
         </p>
         <p className="hint">Drag to orbit · Scroll to zoom · Right-drag to pan</p>
       </footer>

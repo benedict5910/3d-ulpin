@@ -1,10 +1,13 @@
 /**
  * The ground: a flat plane at y = 0 plus a faint grid, so the building has
  * something to stand on and the eye has a sense of scale while orbiting.
+ *
+ * Size and divisions are equal, so **one grid square is exactly 1 x 1 metre** —
+ * the grid is a visible ruler for the project's 1 unit = 1 metre convention.
  */
 
-const GROUND_SIZE = 60
-const GRID_DIVISIONS = 60
+const GROUND_SIZE = 120
+const GRID_DIVISIONS = 120
 
 function Ground() {
   return (
