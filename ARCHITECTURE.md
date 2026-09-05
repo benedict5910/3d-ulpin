@@ -3093,6 +3093,24 @@ the building started. The moment volumes exist on both sides it becomes a
 **boundary with a meaning**, and four genuinely new concepts follow. Only these
 four are new; everything else in the subphase is an application of §10.0's rule.
 
+**The model as built.** Two full-footprint parking decks — not one level cut
+into smaller rooms:
+
+```
+  B1   −3.0 m →  0.0 m   22 × 18 m   396 m²   Parking   KA-…-B01-PARK
+  B2   −6.0 m → −3.0 m   22 × 18 m   396 m²   Parking   KA-…-B02-PARK
+```
+
+The excavation carries **its own canonical footprint**
+(`underground/basementFootprint.ts`), not the tower's: 22 × 18 m against the
+tower's 18 × 14 m, so it oversails the building by 2 m on every side and is
+visibly broader in the scene. It must still lie wholly inside the parent parcel,
+and does with more than seven metres to spare — checked by `checkBasementPlan`
+in `validation/undergroundRules.ts`, not asserted. One space per level
+(`SPACES_PER_BASEMENT_LEVEL = 1`) makes the register **20 above ground + 2
+underground = 22 spaces**. A deck's use segment is `PARK`, which says what the
+space *is* to a reader without a legend.
+
 **1. The ground datum is a stated constant, not a literal zero.**
 `GROUND_DATUM_Y` lives in `underground/basementConfig.ts` and every rule
 compares against it. Three sentences the interface must let an audience read off
@@ -3131,7 +3149,7 @@ that returns "valid".
 read `floorLevel` as "1-based floor in the upward stack" (the ULPIN encoder,
 floor isolation, the exploded offset, the conflict simulation), and a record
 whose `floorLevel` meant "basement 1" would make every one of them silently
-wrong. Identifiers separate the same way — `B01-U02`, not a negative floor — so
+wrong. Identifiers separate the same way — `B01-PARK`, not a negative floor — so
 a collision across the datum is impossible by construction rather than merely
 unlikely.
 
@@ -3156,12 +3174,29 @@ presenter cannot see. Like isolation's rule it is a decision, not a fade —
 interactivity switches when the mode is entered rather than tracking the opacity
 ramp.
 
-The visualisation obeys §10.0 unchanged. `getUndergroundExplodedOffsetM` is a
-display transform that returns a **negative** offset (`basementIndex + 1`, so
-the first gap opens at the datum rather than welding the basement to the ground
-floor), the canonical interval stays −3.0 → 0.0 m at every explosion amount, and
-the underground emphasis multiplies with floor isolation and conflict focus
-rather than overriding either — so all their combinations remain defined.
+The visualisation obeys §10.0 unchanged. `getUndergroundDisplayOffsetM` is a
+display transform that returns a **negative** vertical offset (via
+`getBasementExplodedOffsetM(basementLevel - 1)`, so the first gap opens at the
+datum rather than welding B1 to the ground floor) alongside the same outward
+plan offset an apartment gets. The canonical intervals stay −3.0 → 0.0 m and
+−6.0 → −3.0 m at every explosion amount, and the underground emphasis multiplies
+with floor isolation and conflict focus rather than overriding either — so all
+their combinations remain defined.
+
+**Touching between decks is valid.** B2's ceiling and B1's floor share the plane
+`y = −3.0`. By the same all-three-axes test that makes a basement ceiling at
+`y = 0` legal, an overlap extent of exactly zero is a shared surface, not an
+intersection — so the stack is contiguous and the topology self-check is fully
+passing.
+
+**Legacy modules.** `scene/basementLayout.ts` is the earlier record type
+(`UndergroundUnit`, a single level subdivided 2 × 2 into Storage / Utility
+spaces). It is superseded by `underground/undergroundLayout.ts` and is no longer
+reachable from any live path, but it is not yet unreferenced: `scene/Basement.tsx`,
+`scene/propertyVolume.ts`, `scene/basementSelfCheck.ts` and `ui/inspectorRecord.ts`
+still import it, and `SceneLabels` keeps a `selectedUndergroundUnit` prop that
+`SceneViewer` always passes as `null`. None of those are mounted or run by
+`App`; the island can be deleted as one piece.
 
 ## 11. AI-assisted footprint input (Phase 12)
 

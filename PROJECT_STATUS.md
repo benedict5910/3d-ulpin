@@ -2090,3 +2090,13 @@ deterministic, overlay appears on the roof, footprint metrics read 252 m²,
 Generate 3D Cadastre enables, and the whole Phase 6–11 workflow still behaves.
 
 **Next phase:** final polish / demo preparation.
+
+## Underground model — current (supersedes the Subphase H figures above)
+
+Two parking decks, not one subdivided level: **B1 −3.0 → 0.0 m**, **B2 −6.0 → −3.0 m**, each the full
+22 × 18 m canonical basement footprint (`underground/basementFootprint.ts`), **396 m² per deck** — a
+separate footprint from the tower's 18 × 14 m, and wholly inside the parent parcel. One space per level:
+**2 underground spaces**, so **20 above ground + 2 underground = 22** total; identifiers end `B01-PARK` /
+`B02-PARK`. The old 2 × 2 Storage / Utility subdivision of a single level is gone. The decks touch at
+`y = −3.0`, which is valid (shared surface, zero overlap extent), and the topology self-check is fully passing.
+`scene/basementLayout.ts` is legacy — off every live path, though still imported by `scene/Basement.tsx`, `scene/propertyVolume.ts`, `scene/basementSelfCheck.ts` and `ui/inspectorRecord.ts`.
