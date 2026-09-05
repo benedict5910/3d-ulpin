@@ -43,6 +43,13 @@
  * the engine's own report, so it can report `failed` as readily as `complete`.
  * The pipeline still shows only what the prototype actually does.
  *
+ * THE AI FOOTPRINT PHASE ADDED A NEW FIRST STEP.
+ * The list used to begin at "Parcel Loaded", with the footprint simply present.
+ * It now begins at the *source of the footprint* — the image it was extracted
+ * from, or, on the fallback path, the authored ring and the fact that no
+ * extraction ran. Same rule as every other row: it reports what happened, and it
+ * cannot report a detection that did not occur.
+ *
  * No React, no Three.js, no Leaflet.
  */
 
@@ -76,8 +83,34 @@ export interface PipelineStep {
   readonly detail: string
 }
 
+/**
+ * Where the footprint came from — the pipeline's first row.
+ *
+ * Passed in as two already-worded strings rather than as the extraction record,
+ * for the same reason every other figure here is passed in already measured:
+ * this module turns model state into rows, and giving it the extraction object
+ * would make it a second place that decides what a detection *means*. The
+ * wording is owned by `App`, which is the layer that knows whether the
+ * geometry was detected or fell back.
+ */
+export interface PipelineSourceSummary {
+  /** The step's label, e.g. `Source Image Extracted`. */
+  readonly label: string
+  /** The evidence line under it. */
+  readonly detail: string
+}
+
 /** Everything the pipeline needs to describe itself. */
 export interface PipelineInput {
+  /**
+   * The provenance of the footprint, as the first step of the pipeline.
+   *
+   * It is `complete` by construction — the workspace is not mounted until a
+   * footprint exists (see `App`), so there is no state in which this row could
+   * honestly be pending. That is the point: the pipeline now begins at the
+   * image rather than at a polygon that was simply present.
+   */
+  readonly source: PipelineSourceSummary
   /** Has the user requested the 3D cadastre? */
   readonly isGenerated: boolean
   /**
@@ -129,12 +162,12 @@ function area(value: number): string {
 }
 
 /**
- * Build the five pipeline steps for the current state of the model.
+ * Build the pipeline steps for the current state of the model.
  *
- * The first two are complete from the moment the page loads: the parcel and its
- * footprint are *source data*, already present before the user does anything.
- * The last three progress together with the animation, and are all complete once
- * it settles.
+ * The first three are complete from the moment the workspace opens: the
+ * footprint's source, the parcel, and the footprint itself are *source data*,
+ * already present before the user does anything. The rest progress together
+ * with the generation animation, and are all complete once it settles.
  */
 export function buildPipelineSteps(input: PipelineInput): PipelineStep[] {
   const { stage, isGenerated } = input
@@ -159,6 +192,18 @@ export function buildPipelineSteps(input: PipelineInput): PipelineStep[] {
   const hasBasement = input.undergroundCount > 0
 
   return [
+    {
+      // THE PIPELINE NOW STARTS AT THE IMAGE.
+      // Before this phase the first row was "Parcel Loaded" and the footprint
+      // simply existed. The list said, truthfully, what the prototype did — and
+      // quietly left out the question a cadastral system is actually asked
+      // first, which is where the boundary came from. This row answers it, and
+      // it names the fallback as a fallback when that is what happened.
+      id: 'source',
+      label: input.source.label,
+      state: 'complete',
+      detail: input.source.detail,
+    },
     {
       id: 'parcel',
       label: 'Parcel Loaded',

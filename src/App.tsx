@@ -4,6 +4,8 @@ import SceneViewer from './scene/SceneViewer'
 import GISMap from './map/GISMap'
 import ParcelInfoPanel from './map/ParcelInfoPanel'
 import BuildingSummary from './ui/BuildingSummary'
+import FootprintSourcePanel from './ui/FootprintSourcePanel'
+import FootprintSourceStage from './ui/FootprintSourceStage'
 import GenerateCadastreControl from './ui/GenerateCadastreControl'
 import GenerationStatus from './ui/GenerationStatus'
 import PipelineStatus from './ui/PipelineStatus'
@@ -24,9 +26,12 @@ import {
   getGenerationVisuals,
   getStageMessage,
 } from './animation/generationTimeline'
-import { DEMO_PARCEL } from './data/demoParcel'
+import { buildDemoParcel } from './data/demoParcel'
+import type { ExtractedFootprint } from './extraction/footprintExtraction'
+import { runFootprintExtractionSelfCheck } from './extraction/extractionSelfCheck'
 import { getFootprintMetrics } from './geometry/footprint'
 import { runFootprintGeometrySelfCheck } from './geometry/footprintSelfCheck'
+import { DEMO_PARCEL_IDENTITY } from './ulpin/parcelIdentity'
 import {
   buildFloorLayouts,
   DEFAULT_BUILDING_CONFIG,
@@ -94,8 +99,29 @@ import { runTopologyValidationSelfCheck } from './validation/validationSelfCheck
 import { buildPipelineSteps } from './workflow/pipelineSteps'
 
 /**
- * The application shell — and the owner of everything the whole app agrees on:
+ * The cadastre workspace — and the owner of everything the whole app agrees on:
  * the footprint, the generated property units, and the workflow state.
+ *
+ * IT IS MOUNTED WITH A FOOTPRINT, OR NOT AT ALL.
+ * Since the AI footprint phase, `App` (at the foot of this file) is a two-state
+ * shell: the source stage until a footprint has been extracted, this workspace
+ * afterwards. The extraction arrives as a prop and the parcel is *built from
+ * it*, which is what makes "the extracted footprint is the authoritative
+ * horizontal geometry for this session" a fact about the component tree rather
+ * than a claim in a comment — there is no module-level ring for this component
+ * to fall back to, and no state in which it holds a footprint nobody detected.
+ *
+ * ONE RING, NOT THREE.
+ *   extraction.footprintOutlineM        ← survey axes, the single description
+ *            │
+ *            └─ buildDemoParcel ──┬──► parcel.buildingFootprintMetric  (3D)
+ *                                 └──► parcel.buildingFootprint        (map)
+ *
+ * `footprintFromEastNorth` performs the one conversion, in one place, exactly as
+ * it did when the ring was authored by hand. The `footprint`, `areaSqM`,
+ * `widthM` and `depthM` fields on the extraction record are the *extractor's own
+ * measurements*, shown as evidence in the source stage and in the provenance
+ * card; nothing in this component reads them, and nothing downstream can.
  *
  * They live here for the same reason: this is the nearest component that
  * contains *every* reader. The map, the 3D scene, the summary, the pipeline and
@@ -104,7 +130,7 @@ import { buildPipelineSteps } from './workflow/pipelineSteps'
  *
  * THE DATA FLOW
  *
- *   DEMO_PARCEL.buildingFootprintMetric        ← the surveyed polygon, in metres
+ *   parcel.buildingFootprintMetric             ← the extracted polygon, in metres
  *          │
  *          ├──► getFootprintMetrics ──► width / depth / area / centroid
  *          │            └──► BuildingSummary, ParcelInfoPanel, camera presets
@@ -178,15 +204,41 @@ import { buildPipelineSteps } from './workflow/pipelineSteps'
  */
 const EMPTY_IDS: readonly string[] = []
 
-function App() {
+interface CadastreWorkspaceProps {
+  /**
+   * The footprint this session was built from, with its provenance.
+   *
+   * A prop, not a module constant, and non-nullable: the shell does not render
+   * this component until there is one.
+   */
+  extraction: ExtractedFootprint
+  /** Discard the model and return to the source stage. */
+  onNewSource: () => void
+}
+
+function CadastreWorkspace({ extraction, onNewSource }: CadastreWorkspaceProps) {
   const config = DEFAULT_BUILDING_CONFIG
-  const parcel = DEMO_PARCEL
+
+  /**
+   * The parcel, assembled around the extracted ring.
+   *
+   * `buildDemoParcel` has taken a footprint outline since Phase 8 — the seam was
+   * already there, waiting for something other than the authored constant to
+   * hand it. The identity and the origin are unchanged: an extraction moves the
+   * *geometry*, and re-surveying a plot does not renumber it. See
+   * `data/demoParcel.ts` for why those are separate facts.
+   */
+  const parcel = useMemo(
+    () => buildDemoParcel(DEMO_PARCEL_IDENTITY, extraction.footprintOutlineM),
+    [extraction.footprintOutlineM],
+  )
 
   /**
    * The building footprint: the authoritative horizontal geometry.
    *
-   * Read off the parcel, not built here. `App` is the wiring, not a second
-   * place geometry could be invented.
+   * Read off the parcel, not built here — and the parcel derived it from the
+   * extraction above. This component is the wiring, not a second place geometry
+   * could be invented.
    */
   const footprint = parcel.buildingFootprintMetric
 
@@ -268,6 +320,12 @@ function App() {
       // The footprint-driven geometry still produces the 18 × 14 m, 252 m²,
       // 20-unit building it produced before the rewiring.
       runFootprintGeometrySelfCheck()
+
+      // The image path lands on that same ring: the pixel→metre conversion is
+      // exact, the raster extent is read half-open, north is not mirrored, and
+      // the extractor takes the building rather than the largest bright patch.
+      // See `extraction/extractionSelfCheck.ts`.
+      runFootprintExtractionSelfCheck()
 
       // The generation sequence is monotonic, travels bottom-up, and is exact
       // at both ends — the properties an animation cannot be eyeballed for.
@@ -1211,6 +1269,30 @@ function App() {
   }, [applyCameraView, openingView])
 
   /**
+   * How the pipeline's first row describes this footprint's origin.
+   *
+   * Worded here rather than in `workflow/pipelineSteps.ts` because this is the
+   * layer that knows which path was taken, and because a detection and a
+   * fallback must never be able to read the same. Both lines quote a figure
+   * from the record, so neither can be a label with nothing behind it.
+   */
+  const pipelineSource = useMemo(
+    () =>
+      extraction.provenance.isFallback
+        ? {
+            label: 'Fallback Footprint Loaded',
+            detail: 'authored demo ring · no image extraction',
+          }
+        : {
+            label: 'Source Image Extracted',
+            detail: `${extraction.maskPixelCount.toLocaleString('en-IN')} px mask · ${(
+              extraction.demoConfidence * 100
+            ).toFixed(0)}% demo confidence`,
+          },
+    [extraction],
+  )
+
+  /**
    * The pipeline, derived from the model rather than tracked alongside it.
    *
    * No step can report "complete" because a flag was set somewhere; each is a
@@ -1220,6 +1302,7 @@ function App() {
   const pipelineSteps = useMemo(
     () =>
       buildPipelineSteps({
+        source: pipelineSource,
         isGenerated,
         stage: visuals.stage,
         parcelId: parcel.parcelId,
@@ -1237,6 +1320,7 @@ function App() {
         validation: validationReport,
       }),
     [
+      pipelineSource,
       isGenerated,
       visuals.stage,
       validationReport,
@@ -1276,6 +1360,10 @@ function App() {
         <section className="map-panel" aria-label="Cadastral parcel map">
           <GISMap parcel={parcel} />
           <ParcelInfoPanel parcel={parcel} footprintMetrics={footprintMetrics} />
+          {/* Where this parcel's horizontal geometry came from. It sits at the
+              foot of the *source* column because that is what it is a footnote
+              on — see `ui/FootprintSourcePanel.tsx`. */}
+          <FootprintSourcePanel extraction={extraction} onNewSource={onNewSource} />
         </section>
 
         <section className="scene-panel">
@@ -1419,11 +1507,49 @@ function App() {
         <p className="hint">
           {isGenerated && visuals.isSettled
             ? 'Click a unit to inspect · Presets to reframe · Exploded view to separate floors · Underground to read below the y = 0 datum · Basemap © OpenStreetMap contributors'
-            : 'Press Generate 3D Cadastre to extrude the footprint · Drag to orbit · Basemap © OpenStreetMap contributors'}
+            : 'Press Generate 3D Cadastre to extrude the extracted footprint · Drag to orbit · Basemap © OpenStreetMap contributors'}
         </p>
       </footer>
     </div>
   )
+}
+
+/**
+ * The application shell: source stage, then workspace.
+ *
+ * WHY THE SPLIT IS A COMPONENT BOUNDARY AND NOT A FLAG
+ * A boolean would have left `CadastreWorkspace` holding a footprint that might
+ * not exist, and every hook inside it would then have needed a placeholder ring
+ * to run against — which is precisely the "one polygon for the AI stage, another
+ * for the rest of the system" that this phase set out not to build. Mounting the
+ * workspace *with* the extraction removes the possibility: there is no default,
+ * no `?? DEMO_BUILDING_FOOTPRINT_M`, and no state in which the map, the
+ * generator and the validator could be reading different geometry.
+ *
+ * It also gives the workflow its two honest resting points. Before extraction,
+ * the 3D generation is not "disabled" — it is *absent*, because there is nothing
+ * to generate from. Afterwards, everything that existed before this phase works
+ * exactly as it did.
+ *
+ * `onNewSource` clears the extraction, which unmounts the workspace and with it
+ * every piece of state it owns — selection, isolation, explosion, simulation,
+ * camera. That is a stronger reset than `handleReset` performs and a different
+ * one: `handleReset` returns to the *source geometry* so the generation can be
+ * demonstrated again on the same footprint, which is the behaviour the demo has
+ * relied on since Phase 8 and which this phase deliberately does not change.
+ * Starting from a new image is the outer loop, and it lives in the provenance
+ * card next to the record it replaces.
+ */
+function App() {
+  const [extraction, setExtraction] = useState<ExtractedFootprint | null>(null)
+
+  const returnToSource = useCallback(() => setExtraction(null), [])
+
+  if (extraction === null) {
+    return <FootprintSourceStage onAdopt={setExtraction} />
+  }
+
+  return <CadastreWorkspace extraction={extraction} onNewSource={returnToSource} />
 }
 
 export default App

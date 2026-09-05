@@ -3163,7 +3163,101 @@ floor), the canonical interval stays −3.0 → 0.0 m at every explosion amount,
 the underground emphasis multiplies with floor isolation and conflict focus
 rather than overriding either — so all their combinations remain defined.
 
-## 11. Repository shape
+## 11. AI-assisted footprint input (Phase 12)
+
+The pipeline now begins at an **image**. Everything downstream of the footprint
+is unchanged; what changed is where the footprint comes from.
+
+**The stage.** `App` is a two-state shell. Until a footprint exists it renders
+`ui/FootprintSourceStage.tsx` — a bundled image, a **Detect Building Footprint**
+button, the detected polygon drawn over the image, and the measurements taken
+from it. Adopting the result mounts `CadastreWorkspace`, which is the whole of
+the previous application, with the extraction as a prop. The workspace is
+therefore **never mounted without a footprint**, which is what makes "the
+extracted footprint is the authoritative horizontal geometry for this session" a
+property of the component tree rather than a claim in a comment.
+
+**The extraction** (`extraction/footprintExtraction.ts`) is a deterministic
+colour-threshold pass followed by a 4-connected largest-component search, whose
+axis-aligned extent is converted to metres by one function, `pixelToEastNorth`.
+It is **not a trained model** and every label in the interface says so. The
+component search rather than a bounding box of the raw mask is the part that
+matters: a threshold always also catches a light patch of road or a neighbour's
+parapet, and a raw bounding box would let one of those stretch the measured
+building by metres, silently. Six gates refuse a frame — wrong raster size, no
+candidate pixels, component too small, component touching the frame edge,
+implausible ground size, insufficient rectangularity — and each reports *which*,
+so the interface never says "detection failed" for six different reasons.
+
+**One ring, not three.** The extractor returns the project's own survey ring,
+`readonly { eastM, northM }[]`. `buildDemoParcel` — which has taken a footprint
+outline since Phase 8 — converts it with `footprintFromEastNorth`, exactly as it
+converted the authored constant, and the map, the 3D generator, the unit layout
+and the validator all read `parcel.buildingFootprintMetric` as before:
+
+```
+image + georeference ──► mask ──► component ──► extent
+                                                  │  pixelToEastNorth
+                                                  ▼
+                                        footprintOutlineM
+                                                  │  buildDemoParcel
+                                    ┌─────────────┴─────────────┐
+                          buildingFootprintMetric        buildingFootprint
+                            (3D, units, validator)          (Leaflet)
+```
+
+The `footprint` / `areaSqM` / `widthM` / `depthM` fields on the extraction record
+are the **extractor's own measurements**, displayed as evidence in the source
+stage and in the provenance card. Nothing in `CadastreWorkspace` reads them —
+the same canonical/presentation separation §10.0 states for the 3D record.
+
+**Why height is a separate source.** A single nadir image gives a horizontal
+outline and **nothing reliable about height**. Floors (5), typical floor height
+(3.0 m) and the derived total (15.0 m) are therefore shown in their own block,
+outside the detection result, labelled *not from the image*, and read from
+`DEFAULT_BUILDING_CONFIG` — the same config the 3D generator uses, so the stage
+cannot quote a height the model will not build. In production those come from
+building records, sanctioned plans, LiDAR or photogrammetry.
+
+**Provenance travels with the geometry.** `FootprintProvenance` — method, input,
+status, and an `isFallback` flag — is stamped on the ring by the extractor and
+rendered by `ui/FootprintSourcePanel.tsx` at the foot of the source column, and
+as the pipeline's new first row. Status is `Prototype / non-authoritative` on
+every path.
+
+**The fallback.** If the image fails to decode, the browser refuses a pixel read,
+or a gate rejects the frame, the deterministic ring from `data/demoParcel.ts` is
+one click away. It is stamped with a *different* method string and `isFallback:
+true`, carries no confidence and no mask count, and is described as fallback
+geometry everywhere it appears. The demo cannot dead-end, and it cannot pretend
+a fallback was a detection.
+
+**The demo image** (`assets/demo-aerial.png`) is drawn, not photographed — no
+licence, no real place, and a georeference that is exact by construction. The
+subject roof occupies pixels `[368, 656) × [400, 624)` at 0.0625 m/px about an
+origin pixel of `(512, 512)`, which recovers the project's 18.00 × 14.00 m,
+252 m² ring to the last decimal. `extraction/extractionSelfCheck.ts` asserts
+that (21 assertions), including the three mistakes an overlay cannot reveal: a
+wrong ground sample distance, a mirrored north axis, and an inclusive rather
+than half-open reading of the pixel extent.
+
+**Prototype limitations, stated.** The mask is reduced to its **axis-aligned
+extent**, not traced as a contour — which matches, rather than exceeds, the
+prototype's rectangular unit subdivision (`scene/unitLayout.ts`). The
+"confidence" figure is `rectangularity × colourAgreement`, two things this
+extractor measured, and is labelled *demo confidence* wherever it appears; it is
+not a model posterior. The georeference is a plain north-up raster with no CRS.
+Nothing here is survey-grade, and nothing here is legally authoritative.
+
+**What production replaces.** `extraction/footprintExtraction.ts` and
+`extraction/demoImageSource.ts`, and nothing else: a trained building
+segmentation model (U-Net, Mask R-CNN, or a vendor footprint API) over licensed
+orthophoto or satellite imagery with real CRS and acquisition metadata, feeding
+the same `RasterImage + ImageGeoreference -> ExtractedFootprint` contract.
+
+---
+
+## 12. Repository shape
 
 ### As built (Phases 1–10 — this exists now)
 
@@ -3407,7 +3501,7 @@ phase — the outstanding `npm install` is still Phase 7's.
 
 ---
 
-## 12. Why we are building incrementally
+## 13. Why we are building incrementally
 
 The build is split into small phases, and **each phase must leave the project runnable, documented and committed** before the next one starts.
 

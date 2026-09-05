@@ -1,7 +1,7 @@
 import { countCompletedSteps, type PipelineStep } from '../workflow/pipelineSteps'
 
 /**
- * The 2D-to-3D pipeline, shown as a five-step list.
+ * The image-to-3D pipeline, shown as a list of steps.
  *
  * A pure view. Every step, its state and its detail line are computed by
  * `workflow/pipelineSteps.ts` from the model; this component decides only how

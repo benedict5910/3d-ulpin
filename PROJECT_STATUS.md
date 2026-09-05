@@ -2064,3 +2064,29 @@ type-clean; nothing in this session ran Vite, a browser or the real
 
 **LAST SAFE SOURCE CHECKPOINT:** commit `b30eaae` (unchanged — nothing was
 committed). Working tree now carries Subphase H, uncommitted.
+
+## Phase 12 — AI-assisted building footprint input — *SOURCE COMPLETE, NOT host-verified, NOT committed*
+
+**Source status.** Source complete and type-clean against the whole tree
+(stubbed third-party modules): 7 stub artefacts before and after, identical —
+no new type errors. The extraction self-check passes **21/21** in bare Node and
+in a real Chromium canvas readback against the bundled PNG, recovering the
+authored ring exactly (−9/+9 m east, −7/+7 m north, 18.00 × 14.00 m, 252 m²).
+Vite has still never run anywhere in this environment.
+
+**Files changed.** New: `src/assets/demo-aerial.png`,
+`src/extraction/footprintExtraction.ts`, `src/extraction/demoImageSource.ts`,
+`src/extraction/extractionSelfCheck.ts`, `src/ui/FootprintSourceStage.tsx`,
+`src/ui/FootprintSourcePanel.tsx`, `src/ui/FootprintOverlay.tsx`.
+Modified: `src/App.tsx` (split into an `App` shell + `CadastreWorkspace`;
+the parcel is now built from the extracted ring), `src/workflow/pipelineSteps.ts`
+(new first step), `src/ui/PipelineStatus.tsx` (comment only), `src/index.css`,
+`ARCHITECTURE.md` §11 (§11/§12 renumbered to §12/§13).
+**No new dependencies. No backend, no database, no trained model, no network.**
+
+**Host verification required.** `npm run typecheck`, `npm run build`,
+`npm run dev`, then the browser checklist: image loads, detection is
+deterministic, overlay appears on the roof, footprint metrics read 252 m²,
+Generate 3D Cadastre enables, and the whole Phase 6–11 workflow still behaves.
+
+**Next phase:** final polish / demo preparation.
