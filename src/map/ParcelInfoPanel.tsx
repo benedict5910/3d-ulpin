@@ -1,4 +1,5 @@
 import type { DemoParcel } from '../data/demoParcel'
+import type { FootprintMetrics } from '../geometry/footprint'
 
 /**
  * The parcel record, in words, beneath the map.
@@ -41,9 +42,19 @@ function formatCoordinates(latitude: number, longitude: number): string {
 interface ParcelInfoPanelProps {
   /** The parcel being displayed on the map above. */
   parcel: DemoParcel
+  /**
+   * The building footprint, measured once by `App`.
+   *
+   * Passed in rather than measured here, so this panel, the building summary
+   * and the 3D geometry all quote **one** measurement of one polygon. Before
+   * Phase 8 the footprint's dimensions existed only as `config.width` and
+   * `config.depth`, which this panel had no business reading; now they are a
+   * property of the shape on the map, which is exactly what it should show.
+   */
+  footprintMetrics: FootprintMetrics
 }
 
-function ParcelInfoPanel({ parcel }: ParcelInfoPanelProps) {
+function ParcelInfoPanel({ parcel, footprintMetrics }: ParcelInfoPanelProps) {
   return (
     <section className="parcel-info" aria-label="Parcel information">
       <h2 className="summary-title">Cadastral Parcel</h2>
@@ -67,6 +78,15 @@ function ParcelInfoPanel({ parcel }: ParcelInfoPanelProps) {
           <dt>Building footprint</dt>
           <dd>{formatAreaSqM(parcel.buildingFootprintAreaSqM)}</dd>
         </div>
+        {/* The plan dimensions of the green polygon above — and the same two
+            numbers the 3D building is generated from. */}
+        <div className="summary-row">
+          <dt>Footprint plan</dt>
+          <dd>
+            {footprintMetrics.widthM.toFixed(1)} &times;{' '}
+            {footprintMetrics.depthM.toFixed(1)} m
+          </dd>
+        </div>
         <div className="summary-row">
           <dt>Coordinates</dt>
           <dd className="mono">
@@ -84,6 +104,8 @@ function ParcelInfoPanel({ parcel }: ParcelInfoPanelProps) {
       <p className="parcel-info-note" role="note">
         Boundary and footprint are local demo geometry. No cadastral API is
         called; the basemap tiles are OpenStreetMap, the parcel data is not.
+        The footprint polygon shown here is the geometry the 3D model is
+        generated from.
       </p>
     </section>
   )

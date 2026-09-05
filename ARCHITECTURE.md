@@ -31,9 +31,13 @@ The prototype is a **single-page browser application with no server**. Everythin
                     └──────────────────────────────────────────┘
 ```
 
-*As of Phase 7 both views exist and both read the same parcel identity, but the
-double-headed arrow between them is still aspirational: selection state is shared
-within the 3D half only. Linking the two views is the next phase — see §7.9.*
+*As of Phase 8 the arrow from the map to the 3D view is real: the building's
+horizontal geometry **is** the cadastral footprint polygon shown on the map, not
+a second description of it — see §8. Phase 9 made that derivation visible as an
+animated 2D→3D generation, and added the exploded view, camera presets and
+labels a live demonstration needs — see §9. What is still aspirational is the
+arrow back: selection state is shared within the 3D half only, and clicking a
+unit does not yet highlight anything on the map.*
 
 **The core idea being demonstrated:** a normal ULPIN identifies a parcel of land on a flat map. A *3D* ULPIN extends that identifier with a vertical component — block / floor / unit — so a specific apartment in a tower has its own unique, resolvable ID. The app shows the same property in two linked views (a 2D map and a 3D model) and lets the user click through to the identifier and its attributes.
 
@@ -184,6 +188,13 @@ asserted in a comment.
 `src/scene/buildingConfig.ts` is the single source of truth. It contains no
 React and no Three.js — only data and arithmetic.
 
+> **Superseded in part by Phase 8.** `width` and `depth` were removed from
+> `BuildingConfig`; the building's horizontal geometry is now the footprint
+> polygon in `data/demoParcel.ts`, measured by `geometry/footprint.ts`. The
+> vertical and subdivision fields below are unchanged and still live here — see
+> §8.2 for what moved and §8.7 for why floor height did not. The listing in this
+> section is kept as the Phase 3 record.
+
 ```ts
 interface BuildingConfig {
   width: number           // metres, along X
@@ -330,6 +341,13 @@ The subdivision is a plain 2D grid over the floor's footprint —
 `BuildingConfig` as everything else. The building is centred on the origin, so
 the footprint runs from `−width / 2` to `+width / 2` and from `−depth / 2` to
 `+depth / 2`, and a cell's bounds are offsets into that:
+
+> **Superseded in part by Phase 8.** The grid is now laid over the *footprint
+> polygon's bounding box* rather than over `config.width` / `config.depth`:
+> `bounds.xMin + column × unitWidth`, and so on. For the demo footprint —
+> centred on the origin — `bounds.xMin` **is** `−width / 2`, so every coordinate
+> below is unchanged. See §8.8, including why the bounding box is still a
+> prototype limitation for irregular plans.
 
 ```
   unitWidth = width / unitColumns          18 / 2 = 9 m
@@ -1323,7 +1341,10 @@ basemap. No AI extraction of parcels from imagery or documents. No topology
 validation — nothing checks that the footprint lies inside the parcel, that
 parcels do not overlap, or that a ring is simple and correctly wound. No
 2D-to-3D generation: the map does not build the 3D model, and the two are
-connected today only by a shared identity, not by a workflow. No backend, no
+connected today only by a shared identity, not by a workflow. *(Superseded by
+Phase 8 — see §8, which makes the footprint the 3D building's source geometry
+and the transformation an explicit user action. Topology validation remains
+absent and is Phase 9.)* No backend, no
 database, no ownership records, no valuation. No second parcel, and therefore no
 parcel selection — `buildDemoParcel()` already takes an identity and a config as
 parameters, so a second parcel is a caller change rather than a rewrite, but
@@ -1333,9 +1354,1741 @@ a partial implementation than as an honest absence.
 
 ---
 
-## 8. Repository shape
+## 8. Footprint-driven geometry: the 2D-to-3D pipeline (Phase 8)
 
-### As built (Phases 1–7 — this exists now)
+Phases 6 and 7 built two halves that shared an *identity*. Phase 8 makes them
+share a *geometry*, and turns the relationship between them into a workflow the
+user performs. This is the phase where the prototype stops being two
+visualisations of one property and becomes a cadastral transformation.
+
+### 8.1 The duplication Phase 8 removes
+
+Before this phase the building had **two independent horizontal descriptions**:
+
+```
+      BuildingConfig.width  = 18
+      BuildingConfig.depth  = 14
+              │
+              ├──► buildApartmentUnits()   ──►  the 3D model
+              └──► buildFootprintOutlineM() ──► the polygon on the map
+```
+
+They agreed, and Phase 7's notes were right to say so — the map's rectangle was
+*derived from* the config rather than typed beside it, which already ruled out
+the ordinary way two numbers drift apart. But look at what the arrow means. The
+3D building was the primary object, generated from two scalars, and the cadastral
+footprint was a **picture of it**. That is backwards for a cadastre: on the
+ground, the surveyed outline is the fact and the building is what stands on it.
+
+It is also a description that runs out. "Width and depth" can describe exactly
+one shape. The moment a real footprint arrives — an L, a chamfered corner, a
+plot boundary that a road widening cut across — the two scalars can no longer
+say what the building is, and the map and the model would have to be given
+separate geometry that a human keeps in step by hand. That is the failure this
+phase forecloses.
+
+### 8.2 The footprint is now the source of truth
+
+The arrow is reversed. A single polygon is authored, and everything horizontal
+is measured from it:
+
+```
+   DEMO_BUILDING_FOOTPRINT_M          ← four corners, in metres, in data/demoParcel.ts
+   (a ring, not a width and a depth)
+            │
+            ├──► footprintFromEastNorth() ──► buildingFootprintMetric  (x/z metres)
+            │            │
+            │            ├──► getFootprintMetrics()  width · depth · area · centroid
+            │            │            └──► BuildingSummary, ParcelInfoPanel, camera framing
+            │            │
+            │            ├──► createFootprintPadGeometry()   the plan, drawn on the ground
+            │            ├──► createBuildingShellGeometry()  the plan, extruded to 15 m
+            │            └──► buildApartmentUnits()          the volume, cut into 20 units
+            │
+            └──► localPointToGeoPoint() ──► buildingFootprint (lat/lng) ──► the Leaflet polygon
+```
+
+`BuildingConfig.width` and `BuildingConfig.depth` **no longer exist**. Nothing
+in `scene/` contains the number 18 or the number 14. The demo building is still
+18 m × 14 m, but that is now a *measurement of the polygon* (`getFootprintWidth`,
+`getFootprintDepth`) rather than an input to the renderer.
+
+The map and the 3D viewer agree because they consume one array. Not "two values
+that match" — the same object, converted once at module load and passed down
+from `App`. That is checkable rather than asserted: `checkFootprintGeometry()`
+asserts `DEMO_PARCEL.buildingFootprintAreaSqM` equals the area the 3D pipeline
+measures, and it passes because both are measurements of one ring.
+
+### 8.3 Why latitude and longitude never enter the 3D scene
+
+The map speaks degrees. Three.js cannot.
+
+A degree of latitude is about 111 320 m and a degree of longitude at Bengaluru
+is about 108 500 m — and those two figures are **different**, because meridians
+converge. Feed raw degrees to a renderer that treats its axes as equal and the
+building comes out stretched east-west by 2.6% and shrunk to a speck at the
+origin's precision limits. Worse, a scene built in degrees has no scale: "how
+tall is 15?" has no answer, and every volume, area and elevation the cadastre
+records becomes meaningless.
+
+So the project works in **local metres from a single reference point** —
+`DEMO_PARCEL_ORIGIN`, 12.9352° N, 77.6245° E. That origin is the one place the
+two coordinate systems are tied together:
+
+```
+    lat/lng  ◄── localPointToGeoPoint() ──  local metres  ──► Three.js x/y/z
+   (Leaflet)         (one function,         (the model)        (the renderer)
+                      one origin)
+```
+
+Metres are what a cadastre records, what a person can check ("that corner is 9 m
+east of the reference point"), and what makes `1 unit = 1 metre` true rather
+than aspirational. The conversion to degrees happens once, at the boundary, for
+the map alone. **No file under `scene/` imports `GeoPoint`.**
+
+This is a deliberately local, flat-earth conversion, valid because the plot
+spans under fifty metres. It is not a projection and must not be reused as one;
+a production system would carry proper CRS handling (EPSG:4326 against a local
+UTM zone) instead.
+
+### 8.4 The axis convention, stated once
+
+Two coordinate namings meet, and the mapping between them is fixed in
+`geometry/footprint.ts` — in exactly one function, `footprintFromEastNorth()`:
+
+| GIS local metric | Three.js world | Meaning |
+|---|---|---|
+| `eastM` (+ east) | **X** | east–west |
+| `northM` (+ north) | **Z** | north–south |
+| — | **Y** | elevation, up |
+
+**East = +X, North = +Z, Up = +Y.**
+
+An honest note about the choice, because it is a choice. Three.js's default
+camera looks down −Z, so +Z points *towards the viewer* — on a north-up map that
+reads as downwards, and a strict cartographic mapping would use `northM → −Z`.
+The demo footprint is a rectangle centred on the origin, so both conventions
+produce a **byte-identical ring** and nothing on screen can tell them apart. The
+project takes `northM → +Z` because it is the version a reader can hold in their
+head, and because it keeps the conversion free of a sign that looks like a bug.
+The day the footprint stops being symmetric the choice becomes observable, and
+the fix is one line in one function rather than a hunt through the renderers.
+Phase 7's note in `buildFootprintOutlineM` said the opposite; that function is
+gone, and this table supersedes it.
+
+### 8.5 From a 2D polygon to horizontal 3D geometry
+
+`THREE.Shape` is a 2D path and it lives in the **XY** plane. The footprint lives
+in the world's **XZ** plane. So the geometry is built flat and then laid down,
+and laying it down is where a sign quietly goes wrong.
+
+Rotating by −90° about X maps shape-local coordinates to world like this:
+
+```
+   (xLocal, yLocal, zLocal)  ──rotate −90° about X──►  (xLocal, zLocal, −yLocal)
+```
+
+Read the columns: `xLocal` becomes world X (the footprint's x passes straight
+through), `zLocal` — the extrusion depth — becomes world **Y**, so the building
+rises; and `yLocal` becomes world Z **negated**. That third line is the trap.
+Authoring the shape with `y = point.z` would mirror the building north-to-south
+relative to the property units, which are built from the footprint's raw `z`. On
+a symmetric demo rectangle the mirror is invisible: it would ship, and surface
+much later on the first asymmetric plan as a building subtly the wrong way round.
+
+So `createFootprintShape()` authors the path with **`y = −point.z`**, which the
+rotation negates back to `+point.z`. One deliberate sign, in one function, with
+`FOOTPRINT_FLAT_ROTATION` exported beside it so the two can never be applied
+apart. `scene/footprintGeometry.ts` is the only file in the project that imports
+both `BuildingFootprint` and `THREE`; everything upstream of it is metres and
+arithmetic, everything downstream is meshes.
+
+`ShapeGeometry` triangulates an arbitrary polygon (earcut, internally), so an
+L-shaped plan renders correctly through this path with no change. The
+rectangular assumption in this project lives in the *unit subdivision*, not in
+the drawing of the plan — see §8.8.
+
+### 8.6 Vertical extrusion: how a plan becomes a volume
+
+A cadastral plan plus a height is a volume, and `ExtrudeGeometry` is the
+operation that says so:
+
+```
+   footprint polygon  ──► THREE.Shape  ──► ExtrudeGeometry(depth = 15 m)  ──► the envelope
+```
+
+`bevelEnabled: false`, because a bevel would round the walls by a few
+centimetres and quietly falsify the geometry. `steps: 1`, because a uniform
+extrusion needs no intermediate rings — the floor divisions are *property
+boundaries*, not mesh subdivisions.
+
+The shell is the **envelope**: the volume the building occupies, before anyone
+asks who owns which part of it. The prototype draws it translucent in the source
+state, then hands over to the twenty property units as the generation completes.
+That handover is the clearest available explanation of what a 3D cadastre is —
+the same plan, carried upward, then cut into ownable pieces:
+
+```
+   plan  ─────────►  volume  ─────────►  properties
+   FootprintPad      BuildingShell       Building (20 units)
+   (ShapeGeometry)   (ExtrudeGeometry)   (one BoxGeometry per unit)
+```
+
+The shell and the units are not drawn solidly at the same time. The units fill
+exactly the shell's volume, so both would z-fight and every apartment would sit
+inside an opaque box. The shell fades out as the units fade in; it is a *stage*
+in the transformation, not a permanent part of the model.
+
+### 8.7 Why floor height stays in `BuildingConfig`
+
+The footprint is the horizontal truth. It is emphatically **not** the vertical
+truth, and collapsing the two would be the wrong simplification.
+
+`numberOfFloors` and `floorHeight` are not measured from the ground. No survey
+of the plot reveals them. They come from the building's design and its
+approvals — a plan sanction says five floors at three metres. A cadastral
+footprint, by contrast, *is* a survey product. Two kinds of fact, from two
+sources, with two lifetimes: a re-survey moves the footprint without touching a
+floor, and a revised sanction adds a storey without moving one corner.
+
+So they are two modules and two parameters:
+
+```
+   buildApartmentUnits(config, footprint)
+                        │       └── where the walls stand   (surveyed)
+                        └────────── how high, how many, how cut  (designed)
+```
+
+`unitColumns` / `unitRows` stay with the config for the same reason: how a floor
+is partitioned into saleable properties is a decision about the building, not a
+measurement of the land.
+
+### 8.8 The 2 × 2 subdivision is still a prototype limitation
+
+Phase 8 makes the *building* footprint-driven. It does **not** make the internal
+subdivision polygon-aware, and it is worth being exact about where the line
+falls.
+
+`buildUnitsForFloor()` now lays its grid over the footprint's **bounding box**:
+
+```
+   unitWidth = (bounds.xMax − bounds.xMin) / unitColumns      (18 / 2 = 9 m)
+   unitDepth = (bounds.zMax − bounds.zMin) / unitRows         (14 / 2 = 7 m)
+
+   xMin = bounds.xMin + column × unitWidth
+   zMin = bounds.zMin + row    × unitDepth
+```
+
+For an axis-aligned rectangle the bounding box and the polygon are the same
+shape, so the subdivision is exact — and because the demo footprint is centred
+on the origin, `bounds.xMin` *is* `−width / 2` and the twenty units come out at
+precisely the coordinates Phases 4–7 produced. That is the intended outcome: the
+architecture changed and the geometry did not, and a demo whose numbers shifted
+would make the two impossible to tell apart.
+
+For an L-shaped or chamfered plan they are not the same shape. The grid would
+lay units over ground the building does not occupy, and the corner cells would
+claim area that does not exist. Genuine subdivision of an arbitrary polygon
+needs a partitioning pass — a trapezoidal or monotone decomposition, then an
+allocation of the pieces to properties — and it is deliberately not in this
+phase.
+
+What *is* here is the honesty. `isAxisAlignedRectangle()` can answer the
+question; `App` asks it in development and warns when the answer is no; the
+building summary states the assumption in the interface. A checked assumption is
+a known limitation. An unchecked one is a bug waiting for its first irregular
+input.
+
+### 8.9 The generation workflow, and why there is a button
+
+Everything the "Generate 3D Cadastre" button does could happen at page load. The
+units are pure data and cost nothing to build — indeed `App` builds them
+eagerly, before anything is pressed, so the action is a reveal rather than a
+spinner.
+
+The button exists because the *point* of Phase 8 is that a 2D cadastral record
+can be **transformed** into a 3D one, and a transformation nobody performs is
+indistinguishable from two pictures drawn side by side. Making the user press it
+turns a claim into a demonstration:
+
+| State | The viewer shows | The pipeline says |
+|---|---|---|
+| **Source** | ground · footprint polygon · translucent extruded envelope | 2 of 5 complete |
+| **Generated** | ground · footprint polygon · 20 selectable property units | 5 of 5 complete |
+
+It also keeps the interface honest about what the prototype is. Showing the
+building fully formed on arrival would quietly suggest the 3D model is itself
+source data — the exact misunderstanding this phase exists to dispel.
+
+`isGenerated` is the single piece of workflow state, and it lives in `App`
+beside `selectedUnitId` for the same reason: `App` is the nearest component
+containing every reader. Resetting clears the selection in the same action,
+because a selected unit that is no longer rendered would leave the inspector
+describing a property that is not on screen.
+
+The transition is a 620 ms eased ramp from `useFadeProgress` — plain
+`requestAnimationFrame`, no animation library, and `prefers-reduced-motion`
+jumps straight to the end. It is the only animation machinery in the project.
+Note that the units' materials are marked `transparent` **only while the ramp is
+running**; once it settles the rendering is byte-for-byte what Phases 4–7
+produced, so the settled model pays nothing for the effect.
+
+### 8.10 The pipeline status is derived, not tracked
+
+The five-step list is computed by `workflow/pipelineSteps.ts` from the model:
+
+```
+   Parcel Loaded             ← always complete: source data
+   Footprint Loaded          ← always complete: source data
+   3D Structure Generated    ┐
+   Vertical Units Created    ├── complete together, on generation
+   Prototype ULPIN Assigned  ┘
+```
+
+The last three complete together because they are three consequences of one
+action: `buildApartmentUnits` extrudes nothing by itself, but a single pass
+through it cuts the volume into units and names each one. Staging them as three
+separately-timed ticks would be a nicer animation and a false account of what
+the code does.
+
+Each step carries a *figure* rather than a bare tick — the parcel id, the ring's
+vertex count and area, the floor count and height, the unit and identifier
+counts. A tick shows that a flag was set; a figure shows that the step actually
+ran.
+
+`buildPipelineSteps()` is a pure function returning data, so the view renders
+what it is given and decides nothing. It cannot report a step complete that the
+model says is pending.
+
+**There is no validation step.** Nothing here asks whether the footprint lies
+inside the parcel, whether the rings are simple, or whether two units overlap.
+That is Phase 9's topology engine, and a "Validated" row lighting up with no
+validator behind it would be the one dishonest thing in the interface.
+
+### 8.11 One measurement, read everywhere
+
+`App` calls `getFootprintMetrics()` once and passes the result down. The
+building summary, the parcel info panel, the pipeline and the camera framing all
+read that object. Nothing re-measures.
+
+This matters more than it looks. Four components each computing "the width of
+the footprint" is four opportunities to compute it slightly differently — one
+takes the bounding box, one takes the distance between the first two vertices,
+one rounds early — and the disagreement surfaces as a panel that says 18 m
+beside a model that is 17.9 m wide. Measuring once removes the possibility
+rather than managing it.
+
+The same reasoning removed the last hard-coded horizontal constants from the
+renderer. `SceneViewer`'s shadow-camera extent was `±30 m`, correct for an
+18 × 14 m plan and silently wrong for any other; the camera position was
+`[26, 18, 30]`, hand-tuned to the same building. Both are now derived from the
+footprint's own extent, with multipliers chosen to reproduce the previous view
+for the demo.
+
+The shoelace area formula went the same way. It existed in `demoParcel.ts` over
+`eastM`/`northM` and would have needed a second copy over `x`/`z` for the 3D
+side. There is now one implementation, in `geometry/footprint.ts`;
+`polygonAreaSqM()` is a thin adapter onto it.
+
+### 8.12 Verification without a test runner
+
+`geometry/footprintSelfCheck.ts` follows the pattern Phase 6 established: a pure
+function returning `CheckResult[]`, plus a dev-only runner that logs failures
+and rethrows. `App` runs it under `import.meta.env.DEV`, which is a compile-time
+constant, so the whole branch leaves the production bundle.
+
+The expectations are **literals** — 18, 14, 252, 0, 15, 20, 63, 189 — because a
+value recomputed the same way as the code under test agrees with any bug that
+code contains. They are the numbers Phases 3–7 produced, pinned so that a
+refactor which quietly moved the geometry fails instead of looking like a
+success.
+
+Note what the checks cover beyond the individual figures: that the ground
+floor's units *tile* the footprint exactly (252 m², no gap and no overlap), that
+no unit extends beyond the footprint bounds, and that the area the map reports
+equals the area the 3D pipeline measures. Per-unit areas alone would not catch a
+subdivision reading the wrong extent.
+
+### 8.13 What Phase 8 deliberately does not do
+
+No topology validation engine — nothing checks that the footprint lies inside
+the parcel, that rings are simple or consistently wound, or that units do not
+overlap. No ownership conflict simulation. No AI extraction of footprints from
+imagery or documents. No basement or below-ground volumes; `y = 0` is still the
+floor of the model. No version history and no edit workflow — the footprint is a
+constant, not a document. No standards export (CityGML, IFC, LandInfra). No
+backend, no database, no cadastral API. No polygon triangulation beyond what
+`ShapeGeometry` does for the current demo footprint, and no subdivision of an
+irregular plan. No second parcel and no parcel selection.
+
+Each of these is a later phase or a non-goal, and each would be worse as a
+partial implementation than as an honest absence. Phase 9 is the topology
+validation engine, which only became meaningful once geometry could be supplied
+from data rather than declared in a config.
+
+---
+
+## 9. Presentation: the animated 2D→3D generation (Phase 9)
+
+Phase 8 made the 3D building a *consequence* of the 2D footprint. Phase 9 makes
+that consequence **visible as it happens**, and adds the controls a person needs
+to present it: an animated generation sequence, an exploded view, camera presets
+and a small number of 3D labels.
+
+Nothing about the model changed. No new dependency was added. The whole phase is
+presentation, and it is worth being precise about what that means: the twenty
+property units, their bounds, their areas and their identifiers are byte-for-byte
+what Phase 8 produced. What changed is *when they are drawn and where they are
+drawn*.
+
+### 9.1 The problem the phase solves
+
+Phase 8's viewer had two states and a fade between them. Two things were wrong
+with it, and both cost the demonstration its point.
+
+**The pre-generation state was already three-dimensional.** It showed the
+footprint extruded to 15 m as a translucent box. That is a preview of the answer,
+shown before the question is asked. A viewer who sees a 3D volume on arrival has
+no reason to think the button that follows *creates* anything — it looks like it
+turns on a colour scheme. Worse, it quietly implied that the 3D form was itself
+source data, which is the exact misunderstanding this project exists to dispel: a
+cadastral record today holds a plan and a height, not a volume.
+
+**The transition was a 620 ms crossfade.** A crossfade shows two states. It does
+not show a *transformation*, and "a 2D cadastral record can be transformed into a
+3D one" is the claim the prototype is making.
+
+So: the source state is now purely 2D — flat geometry only, nothing above the
+ground plane — and the transition is a staged, two-second build that a person can
+narrate while it runs.
+
+### 9.2 One number drives everything
+
+The central design decision of the phase, and the one that everything else falls
+out of:
+
+> **Every timing decision in the application is a pure function of a single
+> progress value between 0 and 1.**
+
+```
+  isGenerated ──► useFadeProgress ──► generationProgress   (0 → 1, linear, rAF)
+                                              │
+                                              ▼
+                             getGenerationVisuals(progress, floorCount)
+                                              │
+                              ┌───────────────┼───────────────┐
+                              ▼               ▼               ▼
+                      footprintPulse   shellHeightFraction  floorReveal[]
+                      footprintEmphasis  shellPresence      unitReveal[]
+                              │               │            unitsInteractive
+                              ▼               ▼               stage
+                        FootprintPad   BuildingShell    FloorSlabs, Building,
+                                                        PipelineStatus,
+                                                        GenerationStatus
+```
+
+The obvious alternative — a sequence of timed `setState` calls, "after 300 ms
+show the shell, after 900 ms show the floors" — was rejected. Timers produce
+state that can be *inconsistent with itself*: a timer that fires after a reset, a
+stage that advances while an earlier one is still running, a component that
+re-mounts and no longer knows which timers already ran. Every one of those
+manifests as the exact defect the brief rules out: janky re-mount flicker.
+
+Deriving everything from one number removes the possibility structurally. The
+scene at progress 0.63 is the same scene whether it was reached smoothly, after
+a dropped frame, or by a reset and a second run. **Determinism here is a property
+of the architecture, not something to be careful about.**
+
+It also means the whole sequence is testable without a renderer, which is what
+`animation/generationSelfCheck.ts` does — see §9.8.
+
+### 9.3 The sequence
+
+`animation/generationTimeline.ts` declares four overlapping windows on the
+master progress run. `GENERATION_DURATION_MS = 2200`.
+
+```
+  0.00 ┬─ highlight ──┐                    the source footprint pulses:
+       │              │                    "this is what we start from"
+  0.12 ┼──────── rise ────────┐            the envelope grows out of the
+       │                      │            footprint, 0 m → 15 m
+  0.46 ┼──────────── floors ──────────┐    floor plates appear, bottom-up
+       │                              │
+  0.70 ┼──────────────── units ───────────┐  each floor's property units grow
+       │                                  │  into place, bottom-up, as the
+  1.00 ┴──────────────────────────────────┘  envelope hands over
+```
+
+The windows **overlap on purpose**. Strictly sequential stages read as four
+animations played back to back; a few percent of overlap reads as one continuous
+build — which is what a building going up actually looks like. The overlap is
+small enough that the order is never in doubt.
+
+2.2 s is chosen inside the brief's 1.5–3 s range for a concrete reason: with five
+floors it gives each floor roughly 150 ms of its own, which is long enough to
+read as a stagger and short enough that nobody waits. A twelve-storey building
+would animate as twelve steps with no change to any code — the stagger is
+computed from `floorCount`.
+
+Sampled output at eleven points (the actual values, printed from the module):
+
+| p | shell height | shell presence | floor reveal | unit reveal | stage |
+|---|---|---|---|---|---|
+| 0.00 | 0.00 | 0.00 | 0 0 0 0 0 | 0 0 0 0 0 | source |
+| 0.16 | 0.26 | 0.40 | 0 0 0 0 0 | 0 0 0 0 0 | structure |
+| 0.30 | 0.81 | 1.00 | 0 0 0 0 0 | 0 0 0 0 0 | structure |
+| 0.55 | 1.00 | 1.00 | .99 .65 0 0 0 | 0 0 0 0 0 | floors |
+| 0.65 | 1.00 | 1.00 | 1 1 .97 .44 0 | 0 0 0 0 0 | floors |
+| 0.75 | 1.00 | 0.77 | 1 1 1 1 .91 | .50 0 0 0 0 | units |
+| 0.85 | 1.00 | 0.32 | 1 1 1 1 1 | 1 1 .50 0 0 | units |
+| 1.00 | 1.00 | 0.00 | 1 1 1 1 1 | 1 1 1 1 1 | ready |
+
+### 9.4 What each stage is, mechanically
+
+**The pulse.** `FootprintPad` brightens and returns, shaped as half a sine wave.
+A pulse rather than a step because the footprint has to end up back where it
+started — it is being *pointed at*, not changed.
+
+**The rise is the extrusion, animated.** `BuildingShell` builds its
+`ExtrudeGeometry` once, at full height, and is drawn at
+`scale={[1, 1, heightFraction]}` inside the group that already carries
+`FOOTPRINT_FLAT_ROTATION`. That rotation maps shape-local Z — the extrusion axis
+— onto world Y, so a local Z scale *is* a world height scale, and the extrusion's
+own base at local `z = 0` keeps the building standing on the ground rather than
+shrinking toward its middle.
+
+Rebuilding the geometry each frame would have been the naïve implementation, and
+it would have put a re-triangulation of the plan plus a GPU buffer allocation
+inside the render loop, sixty times a second. Scaling costs one matrix. The scale
+and the rotation must stay on the same element: separated, the building would
+silently scale along north–south instead of upward.
+
+**The floor plates are new geometry.** `createFloorSlabGeometry()` is the same
+extrusion operation as the shell with a different depth — a floor plate and a
+building envelope are both "this plan, carried upward by some distance", and
+writing them as two calls to one function is the honest account of that. Each
+plate is 12 cm thick and sits *on* a floor's `baseY`, occupying the boundary
+between two floors rather than the space inside one, so it never intersects a
+unit. (Phase 3 had full-height floor slabs and Phase 4 deleted them precisely
+because they did.)
+
+They earn their place twice: in the animation they are the middle term between
+"this plan has a height" and "each level holds four properties" — the
+*stratification*, which is the actual subject of a vertical cadastre, shown on
+its own. And in the exploded view they are what the eye follows: four floating
+boxes read as four boxes; four boxes on a plate read as a floor.
+
+**The units grow out of their own floors.** Each unit mesh is scaled on Y by its
+floor's reveal, with its centre placed so the *base* stays pinned to the unit's
+own `yMin`:
+
+```
+centerY = yMin + gap/2 + (height − gap) × reveal / 2
+```
+
+At reveal 1 this reduces exactly to the true centre. Growth upward from the floor
+reads as construction; scaling about the middle reads as a dissolve.
+
+### 9.5 Exploded view is a visualisation transform
+
+Floor 3 of the demo building occupies 6 m to 9 m above ground. In exploded view
+it is *drawn* several metres higher. **It still occupies 6 m to 9 m.** The
+property inspector still says 6–9 m, the prototype ULPIN is unchanged, and any
+future export is unchanged.
+
+`scene/explodedView.ts` is one pure function:
+
+```
+offset(floorIndex, amount) = floorIndex × EXPLODED_FLOOR_GAP_M × amount
+```
+
+The ground floor never moves, so the stack separates upward from its own base and
+stays standing on the footprint that generated it. The offset is added at render
+time in exactly three places — the unit meshes, the floor plates, the selection
+cage — and one more for the labels. Nothing reads it back.
+
+That separation is the design, not an implementation detail. `yMin` / `yMax` are
+cadastral facts: they say which slice of space a person owns. If exploding the
+view edited them, the interface would be answering "how high is this property"
+with a number that depends on a display toggle — which is the class of bug that
+makes a spatial register untrustworthy.
+
+Three components need the same offset for the same floor and must agree exactly,
+or the selection cage floats away from the box it highlights. One function
+imported three times is the only arrangement in which they cannot disagree.
+
+Exploded view is gated on the generation having **settled**, not merely having
+been requested: running two transforms on the same meshes at once would leave
+neither animation readable.
+
+### 9.6 Camera presets
+
+`scene/cameraPresets.ts` computes four named viewpoints — Parcel, Building, Top,
+Selected Unit — as pure arithmetic on tuples, with no `three` import at all.
+Every position is a multiple of the building's own extent, exactly as Phase 8
+derived the default framing; nothing in the file contains an 18, a 14 or a 15.
+The `building` preset reproduces the historic `[26.1, 18, 29.7]` to the
+centimetre, which is verified in the self-check.
+
+`scene/CameraRig.tsx` is the only file that turns a view into motion. It holds
+**no state at all** — its entire working memory is refs — so a camera flight
+causes zero re-renders of the scene graph while it is in progress. It interpolates
+position and orbit target with `EASE_IN_OUT_CUBIC` over `CAMERA_FLIGHT_MS = 850`.
+
+Three details matter:
+
+**It owns the orbit target.** Phase 8 passed `target` to `<OrbitControls>` as a
+prop. That cannot coexist with an animated target — React re-applies the
+declarative prop on each render and yanks the target back mid-flight. The prop is
+gone; the rig sets `controls.target` once on mount and thereafter only during a
+flight.
+
+**`controls.enabled = false` for the duration.** Without it, a user who nudges the
+mouse mid-flight has two things writing to the camera on the same frame, which
+reads as a stutter. Disabling for 850 ms is invisible in use — the camera is
+already moving — and it guarantees the hand-off back to free orbit happens at a
+well-defined moment, from a known position. **That is what "preserve OrbitControls
+after the motion" means in practice.**
+
+**Requests are tokens, not values.** A preset can be pressed twice and must
+re-frame both times; comparing views would swallow the second press. The request
+carries a monotonically increasing token, the rig acts when the token changes, and
+nothing has to clear the request afterwards. The counter is a `useRef`, not state:
+incrementing it from inside a state updater would be double-invoked by React's
+StrictMode in development and produce two tokens for one click.
+
+`getPresetView` is *total* — `unit` with nothing selected falls back to the
+building view — so no caller has to handle a `null` view. The button is disabled
+as well, but a function that could return nothing would push that decision
+everywhere.
+
+### 9.7 Labels, and the restraint rule
+
+A vertical cadastre with twenty units has twenty things that *could* be labelled,
+five floors that could be labelled, and a footprint that could be dimensioned.
+Doing any of that produces a scene where floating text is the dominant visual
+element and the geometry is what the eye has to hunt for.
+
+Labels appear in exactly two situations:
+
+- **Floor labels (F1…F5) only in exploded view.** That is the one moment the
+  strata are separated and unlabelled. Stacked, the floors are obviously in order
+  and the labels would be noise.
+- **The selected unit's number, only for the selected unit.** It answers "which
+  box did I just click" at the moment the inspector fills in on the other side of
+  the screen; the two together tie a record to a volume.
+
+Nothing else is labelled — not hovered units, not unselected units, not the axes.
+They use drei's `<Html>` rather than 3D text so they inherit the interface's
+typography and stay crisp at every zoom, and they are `pointer-events: none`
+throughout so a label can never swallow a click meant for the unit beneath it.
+No labels are drawn at all until the building has settled: labels on a building
+that is still assembling itself would name things before they exist.
+
+### 9.8 Selection, reset, and what the transition guarantees
+
+**Selection becomes available only when `progress >= 1`** — settled, not merely
+requested. A click on a half-grown box would open a record for a property the
+animation has not finished drawing: correct data, wrong moment, and
+indistinguishable from a bug to anyone watching. The gate lives in
+`GenerationVisuals.unitsInteractive`, is enforced in the viewer's click handler,
+and hover is suppressed by the same flag.
+
+Once settled, **everything Phases 4–8 built works exactly as before**: twenty
+units, click to select, amber highlight plus the edge cage, the property
+inspector, the prototype ULPIN, the building summary, the GIS map, the pipeline
+card. The transition is the only thing that is new; the destination is unchanged.
+
+**Reset undoes all of it in one action** — `handleReset` clears the generation
+flag, the selection, the exploded mode, and returns the camera to the opening
+view. Doing all four in one place rather than guarding each where it is read is
+what makes reset feel clean in a live demo: one press, one known state, no
+residue from the previous run. The progress ramp *snaps* back to 0 rather than
+animating in reverse (`reverseDurationMs: 0`), because un-building a building is
+not a thing a cadastre does and a presenter wants to start again immediately.
+
+### 9.9 Why no animation library
+
+The brief allowed React Spring or Framer Motion "only if truly needed". They were
+not. What Phase 9 needs is a *timing* function: given one number between 0 and 1,
+decide how far along each part of a sequence is. That is arithmetic —
+`animation/easing.ts` is about eighty lines including its comments — not a
+state-machine or spring-physics problem.
+
+An animation library would have brought a runtime, a second reconciliation model
+and a second place animation state can live, in exchange for functions that fit
+on one screen. It would also have been the wrong shape: the values being animated
+here are mesh scales and material opacities inside a WebGL scene, not DOM styles.
+
+The one driver is `ui/useFadeProgress.ts` — a `requestAnimationFrame` ramp that
+follows a boolean. `useFrame` was not used for it because the same value drives
+HTML (the status line, the progress bar, the pipeline card) as well as meshes, so
+it is owned above both; and plain rAF keeps the hook free of any Three.js import.
+Both directions honour `prefers-reduced-motion` by jumping to the target.
+
+**Phase 9 added no dependencies.**
+
+### 9.10 Workflow feedback
+
+Three surfaces report the same underlying state, at three levels of detail:
+
+| Surface | Before | During | After |
+|---|---|---|---|
+| `GenerateCadastreControl` | footprint area, primary action | disabled, "Generating…" | outcome + Reset |
+| `GenerationStatus` | absent | stage name + determinate bar | absent |
+| `PipelineStatus` | 2/5, three pending | steps become `active` | 5/5 |
+
+The pipeline gained a third step state, `active`, because a binary list had to
+choose between lying early (all five complete the moment the button is pressed)
+and lying late (nothing changes for two seconds while the scene visibly builds).
+The mapping from animation stage to step is deliberately **coarse**: the units and
+the identifiers move together because they *are* produced together — one pass
+through `buildApartmentUnits` generates a unit's bounds and its prototype ULPIN in
+the same loop iteration. Animating them as two separately-timed steps would be a
+nicer list and a false account of the code.
+
+`countCompletedSteps` deliberately does not count `active` steps: a step under way
+has not produced anything, and a counter that rounded up would be the interface
+claiming a result it does not have.
+
+The `active` marker differs from `complete` and `pending` in *shape* as well as
+colour — a ring with a filled core, against a solid disc and an empty ring —
+because a demo projector may flatten all three colours to the same grey.
+
+There is still **no validation step**. Nothing asks whether the footprint lies
+inside the parcel or whether two units overlap. That is Phase 10's topology
+engine, and a "Validated" row that lit up without a validator behind it would be
+the one dishonest thing in the interface.
+
+### 9.11 What is verified, and what is not
+
+`animation/generationSelfCheck.ts` follows the pattern established in Phase 6 and
+followed in Phase 8: a pure function returning `CheckResult[]`, plus a dev-only
+runner that throws on failure. It exists because an animation is the hardest kind
+of code to be sure about by looking at it — the thing that is wrong is usually a
+*moment* rather than a line.
+
+Because the sequence is a pure function of one number, it can be **sampled**. The
+check walks the timeline in 200 steps and asserts:
+
+- **The endpoints are exact.** At 0: no envelope, no plates, no units, selection
+  off. At 1: everything at exactly 1, selection on. Not "close to" — a 0.997
+  opacity is a permanently transparent building.
+- **Nothing ever goes backwards.** Every reveal is monotonic. A value that dips is
+  a flicker.
+- **The wave travels upward.** Floor *i* is always at least as far along as floor
+  *i+1*, at every sample.
+- **The envelope hands over.** Absent at both ends, present only in between.
+- **Out-of-range input clamps.** Progress 1.4 gives the settled state, not a
+  building at 140 % height.
+- **Exploded view does not alter the record** — asserted against the model: unit
+  301 is still 6–9 m.
+- **Camera presets are finite, the top view is above the building, and the unit
+  view falls back to the building view.**
+
+All 30 checks pass, and Phase 8's 17 footprint checks still pass unchanged.
+
+What is **not** verified in the sandbox: the npm registry is unreachable there, so
+`react`, `three`, `@react-three/*` and `react-leaflet` cannot be installed. The
+whole source tree — every `.tsx` file included — was typechecked under
+`--strict --noUnusedLocals --noUnusedParameters` against minimal hand-written
+stubs for those packages, which catches the project's own wiring (prop types,
+hook usage, typos, unused imports) but **not** whether a drei or R3F prop name is
+correct. `npm run build` on the host remains the only real gate.
+
+---
+
+## 10. Ownership visualisation, validation and simulation (Phase 10)
+
+Phase 9 made the *generation* of a 3D cadastre legible. Phase 10 is about the
+record it produces: showing what is actually owned, checking that the record is
+spatially possible, and demonstrating what happens when it is not.
+
+It runs as five subphases — A full ownership explosion, B floor isolation,
+C topology validation, D conflict simulation, E ownership presentation — each
+source-complete on its own so the work is recoverable if it stops midway.
+
+### 10.0 THE ARCHITECTURAL RULE THIS PHASE IS BUILT ON
+
+Everything below depends on keeping three things separate, and the separation is
+the most important design decision in the project:
+
+```
+  A. CANONICAL CADASTRAL GEOMETRY          the record
+     ApartmentUnit[] from buildApartmentUnits()
+     six bounds, area, volume, prototype ULPIN
+     built once, never written to by anything
+                 │
+                 ▼
+  C. SIMULATION OVERRIDE                   a hypothetical
+     a pure function: canonical units → display units
+     off by default; produces a NEW array, never edits the old one
+     what the validation engine is pointed at
+                 │
+                 ▼
+  B. VISUALISATION TRANSFORM               a way of drawing
+     exploded offsets, floor isolation, camera, fades
+     applied at render time only; produces no data
+     never read back by anything
+```
+
+**Subphase F added a fourth, and it is genuinely a fourth rather than a variant
+of B:**
+
+```
+  D. PRESENTATION GEOMETRY                 evidence about the record
+     the canonical ghost, the displacement arrow,
+     the intersection volume
+     DERIVED from A and C (and from the engine's finding)
+     drawn, labelled, and read by nothing else
+     never clickable, never validated, never counted
+```
+
+B *moves things that exist*; D *adds things that do not*. The ghost is not a
+property, the arrow is not a boundary, and the intersection volume is owned by
+nobody — it is precisely the region whose ownership is the question. Calling
+those a visualisation transform would be a category error with a practical
+consequence: a transform is something the renderer may apply to any unit, and
+these three must never end up in the array a unit iteration walks. They live in
+`simulation/conflictPresentation.ts` (derivation) and `scene/ConflictOverlay.tsx`
+(drawing), outside `<Building>` entirely, and every mesh among them carries
+`raycast={() => null}`.
+
+The direction of dependency is one-way and worth stating: A and C are inputs to
+D, and D's output reaches the renderer and the conflict panel and nothing else.
+Nothing in `validation/`, `scene/unitLayout.ts` or `simulation/conflictSimulation.ts`
+imports the presentation module, and nothing should.
+
+The rule, stated once so it can be quoted:
+
+> **The cadastral record must never inherit a coordinate that came from a
+> visualisation transform, and the validation engine must never be shown one.**
+
+Why it matters more than it sounds. Every one of these is a *coordinate in
+metres*, and they are trivially confusable: an exploded floor is drawn at
+`baseY + 6.4`, a simulated conflict genuinely moves a unit's `xMin`, and the real
+record says neither. If the exploded offset ever leaked into the model, the
+property inspector would answer "how high is this property" with a number that
+depends on a display toggle. If the validator were pointed at exploded
+coordinates, it would report twenty conflicts in a valid building and none in an
+invalid one, because separating things on screen is exactly what makes overlaps
+disappear.
+
+How the code enforces it rather than merely intending it:
+
+- **A is produced once and is `readonly` throughout.** `ApartmentUnit`'s every
+  field is `readonly`; `buildApartmentUnits` returns a fresh array and nothing
+  mutates it afterwards.
+- **B produces offsets, not positions.** `explodedView.ts` exports functions that
+  return numbers to *add* to a mesh position. It has no way to write anything: it
+  takes a unit and returns a triple. `explodedSelfCheck.ts` snapshots the units,
+  runs every offset function over them at full explosion, and asserts they are
+  byte-identical afterwards — so the property is *checked*, not assumed.
+- **C is a pure `canonical → display` function.** It returns a new array with one
+  or two entries replaced. The canonical array is still there, unchanged, and
+  "Restore Valid Geometry" is simply the app pointing at it again — not an
+  undo, not an inverse edit.
+- **The validation engine takes the display units** (A, or C-over-A) **and never
+  the transform.** It has no import path to `explodedView.ts` at all, which is
+  the strongest form of "cannot": not a rule someone must remember, a module
+  graph in which the mistake is unavailable.
+
+### 10.1 Subphase A — full ownership exploded view
+
+Phase 9's exploded view separated floors. That showed
+
+```
+    parcel  →  floor layers
+```
+
+and stopped one level short of the thing the project is about. A vertical
+cadastre's claim is not that a building has five levels — every building has
+levels — it is that **each level is divided into separately owned volumes, each
+with its own identifier**. Subphase A carries the picture to the end:
+
+```
+    parcel  →  floor layers  →  individual ownership volumes
+```
+
+Three ordered levels, exposed as a segmented control beside the camera presets:
+
+| Level | What separates |
+|---|---|
+| `Stacked` | nothing — the building as built |
+| `Floors` | floors lift apart vertically |
+| `Units` | floors stay lifted **and** each floor's units slide outward |
+
+One `ExplodeMode` value rather than two booleans, because the levels are ordered:
+units cannot disperse from a floor that has not been lifted clear, so
+"units apart, floors together" is a state the interface should not be able to
+reach.
+
+#### The horizontal direction is derived, not tabulated
+
+The obvious implementation is a lookup — 301 north-west, 302 north-east, and so
+on. It would work today and be wrong in principle, because *the direction a unit
+moves is a fact about where that unit sits on its floor*, so it should be
+computed from where that unit sits on its floor:
+
+```
+  floorCentre = centre of the bounding box of that floor's units
+  direction   = normalise(unitPlanCentre − floorCentre)
+  offset      = direction × EXPLODED_UNIT_DISTANCE_M × amount
+```
+
+Change the grid from 2 × 2 to 3 × 4 and this keeps working with no edit. The
+middle unit of a 3 × 3 grid sits *on* its floor's centre, has no direction, and
+correctly does not move — that is the right answer, not a special case being
+papered over. (It is also the one case that would divide by zero, so it is
+handled explicitly and checked.)
+
+**Normalised rather than scaled.** Multiplying the raw offset vector — a "scale
+about the centre" — would push far-out units further than near ones, so a wide
+floor would fly apart while a narrow one barely opened. Normalising gives every
+unit the same displacement, which reads as *the same operation applied to each
+property*, which is what it is.
+
+The floor centre comes from the **bounding box** of that floor's units rather
+than the mean of their centres, so a floor with unevenly sized units still
+explodes about the middle of the floor rather than about wherever the small units
+pull the average. For the prototype's uniform grid the two agree exactly.
+
+#### One offset function, four callers
+
+`getUnitDisplayOffsetM(unit, floorCentre, amounts)` returns the complete
+`[x, y, z]` display offset for one property. Four things need that exact value —
+
+- the unit's own mesh (`Building.tsx`),
+- its selection cage (`SelectionOutline`),
+- its floating label (`SceneLabels.tsx`),
+- the "Selected Unit" camera preset (`cameraPresets.ts`),
+
+— and they must agree to the millimetre, or the highlight floats away from the
+box it highlights and the camera flies to where the property used to be. One
+function called four times is the only arrangement in which they cannot disagree.
+Floor plates use the sibling `getFloorDisplayOffsetM`, which returns only the
+vertical component: a floor plate *is* the floor, so there is nothing on it to
+move apart, and its staying whole is exactly what makes the unit explosion
+legible — the properties leave, and the layer they belong to stays put.
+
+#### Two ramps, both directions
+
+`explodeAmounts` is `{ floors, units }`: two independent eased values, because
+both are animated and during a transition they genuinely differ. Both ease in and
+out, unlike the generation ramp which snaps back — these are movements between
+two states the user is *looking at*, so regrouping has to be as watchable as
+separating.
+
+The unit ramp is 760 ms against the floors' 620 ms. Going straight from `Stacked`
+to `Units` runs both at once, and the small difference means the floors arrive
+fractionally first, so the eye reads "the building opened into layers, and the
+layers opened into properties" rather than one undifferentiated scatter. It costs
+one constant and no sequencing logic.
+
+#### The honesty line
+
+Whenever an explosion is active the view controls carry:
+
+> *Visualization offset only — cadastral geometry unchanged*
+
+It is held as a constant in `explodedView.ts`, next to the transform it
+describes, so the disclaimer and the thing it disclaims cannot drift apart. It is
+shown only while exploded — a permanent disclaimer is one nobody reads.
+
+#### What is checked
+
+`scene/explodedSelfCheck.ts`, 15 assertions, executed in bare Node. Two subjects:
+
+**That the offsets are right.** A sign error would move every unit *inward*, and
+on a symmetric 2 × 2 grid the result is still symmetric and still looks
+deliberate — so the direction is asserted against the geometry it claims to be
+derived from, unit by unit: every unit moves exactly `EXPLODED_UNIT_DISTANCE_M`,
+every unit's offset has the same sign as its own displacement from the floor
+centre, diagonally opposite units cancel to zero, and a unit on the centre does
+not move.
+
+**That the transform is a transform.** The units are serialised, every offset
+function is run over them at full explosion, and they are serialised again and
+compared. If anyone ever "optimises" one of these functions into an in-place
+mutation, that is what catches it.
+
+### 10.2 Subphase B — floor isolation
+
+A five-storey building with twenty property volumes is, from most angles, a box
+with lines on it. A presenter who wants to say "*this* floor holds four
+separately owned volumes" has to first get the audience looking at the right
+layer, and orbiting until it happens to be unobstructed is not a plan. Isolation
+makes that one instruction — and, since choosing a floor also flies the camera to
+it, one click.
+
+#### Ghosting, and why not hiding
+
+The subphase allowed heavy fading, hiding, or ghosted wireframes. Hiding is the
+tempting one and it is wrong: a single floating slab tells the viewer nothing
+about *where in the building* the layer is, and a property's position in the
+stack is part of its identity in a vertical cadastre. Floor 3 shown alone could
+be any floor.
+
+So the other floors stay, drawn as ghosts — fill down to a tenth, **edges kept at
+better than half**:
+
+```
+  fillScale = mix(1, 0.10, amount)      the volume recedes
+  edgeScale = mix(1, 0.55, amount)      the structure stays
+```
+
+That ratio is the whole mechanism. What survives is the building's shape *drawn
+in line*, which is exactly the information needed to locate the isolated floor
+within it. It also keeps working from any camera angle, which a plain fade does
+not: from directly overhead, four faded floors and one solid one are
+indistinguishable; four wireframes and one solid one are not.
+
+Ghosts additionally stop casting shadows and stop writing depth. A ghost that
+throws a full-strength shadow reads as a rendering fault, and one that writes
+depth occludes the very layer it is supposed to be framing.
+
+#### The priority rule
+
+Isolation and the exploded view are **independent and orthogonal**:
+
+```
+  explosion   decides WHERE each floor and unit is drawn        (position)
+  isolation   decides HOW STRONGLY it is drawn, and whether
+              it can be clicked                                 (appearance)
+```
+
+They compose by multiplication and neither module imports the other, so all six
+combinations are defined and none of them is a special case. The most useful
+picture the prototype can produce falls out of that for free: one floor solid,
+its four properties dispersed horizontally, the rest of the building hanging
+around them in outline.
+
+One rule is *not* orthogonal, so it is stated rather than left to be discovered:
+
+> **While a floor is isolated, only that floor's units are clickable.**
+
+A ghost is a context cue, not a target. Clicking one would open a record for a
+property the presenter has just deliberately pushed into the background. The rule
+lives in the `interactive` field of `FloorEmphasis`, and — because a boolean that
+is wrong in one branch produces an interface where ghosts are *secretly*
+selectable, which nobody notices until a judge clicks one —
+`floorIsolationSelfCheck.ts` asserts it explicitly.
+
+Interactivity switches the moment a floor is isolated rather than fading with the
+ghost. A floor 60 % of the way to being background is already background, and a
+target whose clickability flickered on the way in would be worse than one that
+simply stops being a target.
+
+#### The indicator, and why every figure is derived
+
+```
+  ISOLATED LAYER
+  Floor 3
+  Property volumes   4
+  Elevation          6.0 – 9.0 m
+  Combined area      252 m²
+```
+
+Ghosting tells the audience *which* layer is the subject. It says nothing *about*
+that layer, and what a cadastral audience wants at that moment is the layer's own
+record: how many separately owned volumes it holds and what slice of space they
+occupy.
+
+`getIsolationSummary(floorLevel, units)` computes all of it from the units on
+that floor — the count is `filter().length`, and the elevations are read back off
+those units' own `yMin` / `yMax` rather than recomputed from the config. That
+last choice is deliberate: the panel reports the elevation of *the property
+volumes it is counting*, so if the units and their floor layout ever disagreed
+the panel would show it rather than paper over it. A floor with no units returns
+`null`, so the panel is absent rather than confidently claiming "0 property
+volumes, elevation 0–0 m".
+
+The self-check recomputes both figures from the generator, so a hard-coded "4" —
+the easy way to build that panel, and the one that would quietly go stale — cannot
+pass.
+
+#### One action, three effects
+
+Choosing a floor does three things at once, and doing them in one place is what
+makes the control feel like a single instruction:
+
+1. the mode changes;
+2. a selection on *another* floor is cleared, so the inspector never describes a
+   property that has just been pushed into the background;
+3. the camera flies to the `floor` preset — the automatic framing the subphase
+   asked for.
+
+The camera view is computed inside the handler with the *new* floor spliced into
+the preset context, because state set in a callback is not readable until the
+next render. Choosing `All` returns to the building view.
+
+### 10.3 Subphase C — the topology validation engine
+
+**The test of a validator is whether anything can turn it red.** A green panel
+over a valid model proves nothing: a validator broken in the direction of always
+passing looks exactly like a working one. That observation shapes both the engine
+and the way it is checked.
+
+#### What it is pointed at
+
+`src/validation/` has **no import path** to `scene/explodedView.ts` or
+`scene/floorIsolation.ts`. That is the enforcement of §10.0, and it is deliberate
+rather than incidental: separating volumes on screen is exactly what makes
+overlaps disappear, so a validator handed display coordinates would pass an
+invalid building and fail a valid one. The module graph makes the mistake
+unavailable rather than merely discouraged.
+
+It *is* pointed at whatever unit array it is handed, which is how Subphase D
+works: the simulation produces a modified array, the engine validates it, and
+discovers the overlap with no knowledge that a simulation exists.
+
+#### The six rules
+
+```
+  1  parcel-containment      footprint ⊆ parcel, rings simple
+  2  unit-containment        every unit ⊆ footprint (plan), ⊆ 0…H (height)
+  3  floor-hierarchy         ordered, non-negative, non-overlapping,
+                             each unit's Y == its own floor's Y
+  4  identifier-uniqueness   every prototype ULPIN distinct
+  5  ownership-overlap       AABB intersection over all C(n,2) pairs
+  6  structure-count         actual vs getTotalUnits(config)
+```
+
+Every rule runs; there is no short-circuit on first failure. A presenter looking
+at a broken record wants the whole picture, and "we stopped checking after the
+first problem" is not a thing a register should say.
+
+#### The two boundary problems, and why they are the interesting part
+
+**Touching is not overlapping.** Unit 301 occupies x ∈ [−9, 0]; unit 302 occupies
+x ∈ [0, 9]. They share a wall. Every floor shares a slab with the floor above it.
+So the test is:
+
+```
+  overlapX = min(A.xMax, B.xMax) − max(A.xMin, B.xMin)
+  overlapY = min(A.yMax, B.yMax) − max(A.yMin, B.yMin)
+  overlapZ = min(A.zMax, B.zMax) − max(A.zMin, B.zMin)
+
+  conflict  ⟺  overlapX > ε  ∧  overlapY > ε  ∧  overlapZ > ε
+```
+
+A shared wall gives exactly zero on one axis. **`>` and not `>=`** — that one
+character is the difference between a valid twenty-unit building and
+thirty-one reported disputes, and it is asserted directly rather than trusted.
+Requiring all three axes is what makes this a volume test rather than three
+interval tests: units on different floors have identical X and Z and
+`overlapY = 0`.
+
+For axis-aligned boxes AABB intersection is **exact**, not conservative — which
+is why the units are stored as six bounds in the first place. It becomes a bound
+the moment a property is not a box, and that limitation is recorded in `aabb.ts`
+rather than discovered later.
+
+**A point on an edge is inside.** Ray casting is unreliable for a point lying
+exactly on a boundary — whether the ray is judged to cross depends on
+floating-point luck at the vertex. That is not an edge case here, it is the
+normal case: every unit's plan corners sit on the footprint edge, because the
+units were cut from that footprint. A naive ray cast would report a valid
+building invalid about half the time.
+
+So containment asks *"is this point on the boundary, within a tolerance"* first,
+and ray-casts only if not. Cadastral geometry is measured in centimetres; a point
+a micrometre outside a line it is meant to lie on is a rounding artefact, not a
+trespass.
+
+Containment of a ring needs both tests — **every vertex inside, and no edge
+properly crossing**. Vertices alone miss a ring bulging through a notch in a
+concave polygon, which the deliberately non-rectangular demo parcel is exactly
+the shape to have; edge crossings alone miss a ring entirely outside.
+
+#### The result model
+
+Structured, never strings:
+
+```ts
+ValidationResult { id, category, status, message, chip, affectedUnitIds, details }
+TopologyReport   { status, results, passCount, warningCount, failCount,
+                   chips, conflictedUnitIds }
+```
+
+Three consumers read one record and none of them parses English: the status bar
+reads `chip` and `status`, the details panel reads `message` and `details`, and
+the 3D scene will read `affectedUnitIds` to paint conflicting volumes red. That
+last field is what ties a *finding* to the *geometry it is about* by data rather
+than by a second hard-coded list.
+
+`TopologyStatus` (`valid | warning | conflict`) is deliberately a different union
+from `ValidationStatus` (`pass | warning | fail`). A check fails; a *record* has a
+conflict. Using the check-level word at the model level would make the headline
+read "FAIL", which says something went wrong with the software rather than
+something is wrong with the record.
+
+**Chip text is written by the rule, not the view.** The rule already holds the
+figures, so the bar cannot say "20 units" while its own details say nineteen —
+and `ValidationStatusBar.tsx` contains no numbers at all.
+
+A count mismatch is a `warning`, not a `fail`, and the distinction is considered:
+a building with nineteen units is not spatially impossible, it is a building
+whose generator and configuration disagree. `conflict` is reserved for two people
+owning the same air.
+
+#### The pipeline's fourth state
+
+`Topology Validated` is the sixth step, and `failed` is the fourth
+`PipelineStepState`. Until Subphase C no step could come out wrong — extruding a
+polygon and cutting it into boxes cannot fail — and a pipeline whose last step
+could only ever show a tick would be precisely the decorative validator this
+project set out not to build. `countCompletedSteps` does not count `failed`, so a
+model with a dispute reads **5/6**, not 6/6 with a red mark nobody notices.
+
+#### How it is checked
+
+`validationSelfCheck.ts`, 25 assertions, in two halves.
+
+**The healthy model must be clean** on every rule — a validator that cries wolf
+on correct data is worse than none, because a presenter learns to ignore it.
+
+**Six deliberately broken models must each be caught**: two units genuinely
+overlapping (and the intersection volume computed as 4 × 7 × 3 = 84 m³, not
+guessed), a unit outside the footprint, a unit through the roof, a duplicated
+identifier, a building moved off its parcel, and a short unit count that must
+*warn* rather than declare a conflict. Each is fed to the same engine the
+interface uses, and the engine is required to find it and name the right units.
+
+Plus the two touching cases, the plane-geometry primitives directly (including a
+bow-tie ring detected as non-simple, and a reversed ring flipping the sign of its
+signed area while `getFootprintAreaSqM` — which takes the magnitude — cannot see
+it), and the standing no-mutation check.
+
+### 10.4 Subphase D — ownership conflict simulation
+
+A validation engine that has only ever been shown a valid model has demonstrated
+nothing: the panel says `TOPOLOGY VALID`, and so would a panel that always says
+`TOPOLOGY VALID`. The only convincing demonstration is to break the geometry in
+front of the audience and let the same engine find the break.
+
+#### The third kind of coordinate
+
+```
+  canonicalUnits ──► applyConflictSimulation ──► units (display record)
+                              │                        │
+                     off by default                    ├─► the 3D scene
+                     returns a NEW array               ├─► PropertyInspector
+                     canonical untouched               └─► validateTopology
+```
+
+A simulated conflict is **not** a visualisation. Exploding the view changes where
+a box is *drawn*; simulating a conflict changes *what the record says the
+property is*. That is why the inspector shows the simulated bounds and the
+validator is pointed at them — and why the exploded offset reaches neither.
+Confusing the two in either direction breaks the demonstration: treat the offset
+as a simulation and the validator sees phantom conflicts; treat the simulation as
+an offset and it never sees the real one.
+
+`applyConflictSimulation` returns **the input array by reference** when inactive.
+"Restore Valid Geometry" is therefore not an undo, not an inverse translation and
+not a regeneration — it is the app pointing at the original again. Restoration
+cannot drift, because nothing was changed. The self-check asserts it with `===`,
+which is a stronger guarantee than a deep comparison and free.
+
+#### The pair is found, not named
+
+Hard-coding "302 encroaches into 301" would work today and would misrepresent
+what the code knows. `findEncroachmentPair` tests adjacency geometrically: two
+units on the same floor, overlapping genuinely on Y and on one horizontal axis,
+touching within a tolerance on the other. That is exactly the condition the
+validator's overlap test treats as *not* a conflict — which is what makes such a
+pair the right one to break. Move one of them across their shared plane and a
+legal adjacency becomes an illegal intersection, with nothing else about the
+model changed.
+
+Floor 3 is preferred (a middle floor has neighbours above and below for the
+exploded and isolated views to show), but any floor with a usable pair is
+accepted. Units are considered in `indexOnFloor` order so the choice is
+deterministic — the same pair every time, which matters when a demo is rehearsed.
+
+#### It is a translation, not a resize
+
+The encroaching unit's bounds both move by the same amount, so its extent — and
+therefore its area, its volume and its recorded size — are preserved. That is the
+realistic fault: a boundary recorded in the wrong place moves a whole property.
+Its area is not wrong; *where it is* is wrong, and the consequence is that it now
+occupies space its neighbour also occupies. Resizing instead would produce a unit
+whose stated area no longer matched its bounds — a second, different defect that
+would muddy which rule the validator caught. The self-check asserts that
+**only** `ownership-overlap` fails.
+
+#### The colour hierarchy
+
+```
+  conflict   red         highest
+  selected   amber
+  hovered    faint glow
+  normal     slate       lowest
+```
+
+**Conflict outranks selection**, and that ordering is the substantive one: a
+presenter clicking a red volume to read its record would otherwise turn the
+evidence off in the act of examining it. Selection stays legible through its
+*cage* — colour says what a property **is**, the outline says which one you
+**picked**. Two meanings, two channels.
+
+The red comes from `TopologyReport.conflictedUnitIds`, so the boxes on screen and
+the engine's finding are tied by data rather than by a second list that could
+drift.
+
+#### The banner, and the honesty line
+
+*(Subphase G moved this content out of the canvas and into a docked panel in
+the right column — `ui/ConflictPanel.tsx`. What it says is unchanged; only
+where it says it changed. See §10.7.)*
+
+The warning shows the two units with their identifiers, the floor, the rule
+violated, and the intersection volume **with its three extents spelled out beside
+the product** — `84.0 m³` above `4.00 × 7.00 × 3.00 m` — so the figure can be
+checked rather than believed. No adjective, no severity score, no advice.
+
+And when the conflict was staged rather than found in the data, the banner says
+so: *"Simulated override — unit 302 moved 4.00 m east–west across its shared wall
+with 301 on floor 3. The canonical cadastral record is unchanged."* A
+demonstration that let an audience believe the demo data contains a genuine
+ownership dispute would be winning the point by misleading them.
+
+### 10.5 Subphase E — ownership presentation
+
+#### The identifier as a derivation
+
+Phase 6 gave the inspector a prominent ULPIN card, and it was right to. But shown
+alone the identifier is a string, and a string does not explain itself:
+`KA-BLR-0482-001928-F03-U02` looks like a reference number.
+
+Laid out as a descent — parcel, then floor, then unit, then the identifier —
+each rung narrows the one above it and the last rung is visibly the first three
+joined. The identifier stops being a label and becomes a **derivation**, which is
+the clearest statement the interface can make about what a 3D ULPIN is. It costs
+four lines and it *replaced* the standalone card rather than being added beside
+it, so the identifier still appears exactly once.
+
+Every rung is read off a field on the record. Nothing splits the identifier to
+recover its parts, which would be the tempting shortcut and would invert the real
+dependency: the segments were built *from* those values.
+
+#### One decision, one module
+
+`scene/unitStatus.ts` holds the priority ordering and `getUnitStatus` is the only
+place it is applied. Before Subphase E the same nested ternary appeared four
+times in `Building.tsx` — once each for fill colour, emissive colour, emissive
+intensity and edge opacity — which is four chances for a unit's fill to say
+"disputed" while its edges say "selected". The five status assertions in
+`conflictSelfCheck.ts` pin the ordering.
+
+#### Why nothing is green
+
+Every unit that is not in conflict is valid. Colouring valid units green would
+paint nineteen boxes of twenty green, leave the palette with nothing left to say,
+and make the *unremarkable* case the loudest thing on screen — the default state
+of a register is that it is consistent.
+
+So validity is reported where it is a question being asked: on the status bar,
+which states the standing condition of the whole record, and in the property
+inspector for the one unit the user selected (`✓ No conflicts on this volume`).
+In the 3D scene, valid is the absence of red. That restraint is precisely what
+makes the conflict colour read as loudly as it does.
+
+### 10.6 Subphase F — making the conflict visible
+
+#### The problem
+
+By the end of Subphase E the conflict demonstration was *correct* and almost
+*invisible*. The engine found the overlap, the status bar flipped to TOPOLOGY
+INVALID, two boxes turned red — and an audience three metres from a projector
+could not tell which box had moved, where it had moved from, or which part of
+space was being claimed twice. From the default three-quarter view the whole
+finding was a colour change of a few dozen pixels, usually behind another floor.
+The most common question after the demo was *"wait, which one is wrong?"*.
+
+The logic was doing the work and the picture was not showing it. Subphase F is
+about the picture, and it adds no new product capability: no AI, no backend, no
+database, no basement. Every number it puts on screen was already being computed.
+
+#### The five facts, and who owns each
+
+A judge needs to answer five questions without being told, and the design rule is
+that the renderer must not be the thing that invents any of the answers:
+
+| Question | Answered by | Owned by |
+|---|---|---|
+| Which property moved? | the encroachment pair | `conflictSimulation.ts` |
+| Where was it supposed to be? | the canonical record, still in memory | `unitLayout.ts` |
+| Which one did it hit? | the encroachment pair | `conflictSimulation.ts` |
+| What volume overlaps? | the engine's intersection **bounds** | `validation/aabb.ts` |
+| How far did it move? | the simulation's displacement function | `conflictSimulation.ts` |
+
+`simulation/conflictPresentation.ts` collects those five into one `ConflictFocus`
+record. It measures nothing, decides nothing and discovers nothing.
+
+#### The engine now returns the region, not only its size
+
+`VolumeIntersection` previously carried `extents` and `volumeCubicM`: *how big*
+the overlap is, never *where*. A scene that wants to draw the contested volume
+needs where, and the only way to get it was for the renderer to re-derive the
+bounds from the two units — a second implementation of the intersection, living
+in a file that draws things, free to disagree with the one that decides things.
+
+So `getVolumeIntersection` gained a `bounds` field, computed by the same clamp
+that produces the extents and kept beside them so they cannot drift:
+
+```
+  xMin = max(A.xMin, B.xMin)      xMax = min(A.xMax, B.xMax)     (and Y, Z)
+```
+
+`OwnershipConflict` carries it through, and `ConflictOverlay` positions a cube at
+`bounds`' centre and scales it by `bounds`' size. **The red box on screen is the
+validator's own output rather than an illustration of it.** The self-check asserts
+byte-equality between the two.
+
+#### The move is animated, and the record is what animates
+
+`applyConflictSimulation` gained a `progress` parameter. It is important to be
+precise about what that is: **not** a display offset on a settled override. The
+intermediate array is a genuine hypothetical *record* — the inspector reports its
+bounds, and the validator is handed it — exactly as at full strength. What is
+being animated is the hypothesis, not the drawing of it.
+
+That has a visible consequence, and it is the best moment in the demonstration.
+Because the engine is re-run on each intermediate record, the reported
+intersection volume genuinely grows:
+
+```
+  progress   displacement   engine's finding
+  0.00        0.0 m         (no intersection — they only touch)
+  0.10       −0.4 m          8.4 m³
+  0.25       −1.0 m         21.0 m³
+  0.50       −2.0 m         42.0 m³
+  0.75       −3.0 m         63.0 m³
+  1.00       −4.0 m         84.0 m³   (4.00 × 3.00 × 7.00 m)
+```
+
+Nobody interpolated those numbers. The same `findOwnershipConflicts` that
+measures the settled overlap measures each intermediate one, ~190 pair tests per
+frame, comfortably under a millisecond.
+
+At `progress === 0` the simulation returns the canonical array **by reference**,
+which is what makes the end of the restore not merely equal to the original
+record but *be* the original record.
+
+#### Two ramps, because two different things are being animated
+
+| Ramp | Duration | Drives |
+|---|---|---|
+| `conflictProgress` | 1400 ms out / 900 ms back | the **record** — the array the validator sees |
+| `conflictFocusAmount` | 460 ms both ways | **opacity only** — dimming, ghost, arrow, red volume |
+
+They answer to different clocks. The framing should land quickly and get out of
+the way; the property's journey is the thing being watched and deserves the full
+second and a half. The slide is deliberately longer than the 850 ms camera flight
+it starts alongside, so the camera has arrived and settled before the property
+finishes arriving — the viewer is looking at the right place by the time the
+overlap forms.
+
+Restoring is faster than breaking: going wrong is what is being demonstrated and
+deserves the time; going right again is a *restoration*, and one that took as long
+as the damage would read as hesitancy.
+
+#### Auto-focus is one action, and it is reversible
+
+Triggering the simulation enters a dedicated presentation state in a single
+click — the presenter never hunts for the consequence:
+
+- the conflict's own floor is isolated, so the other four ghost away (reusing
+  Subphase B's mechanism rather than adding a parallel one);
+- the exploded view is stood down and its controls disabled — see below;
+- any selection is cleared, so an amber cage cannot compete with the red;
+- the camera flies to a new `conflict` preset framing **both properties and the
+  ghost position**, then hands control straight back to OrbitControls;
+- the two innocent units on that floor fade to a twentieth.
+
+The four displaced values (`explodeMode`, `isolatedFloor`, `activePreset`,
+`selectedUnitId`) are captured in a ref on the way in and reapplied on the way
+out, together with the camera view that framed them. A presenter who had isolated
+floor 2, exploded the floors and selected a unit gets all three back; otherwise
+the simulation would be a one-way door in the middle of a live demo.
+
+The `conflict` preset is deliberately **not** a button. It is applied by the
+simulation rather than chosen, and a sixth button that only worked while a
+conflict was staged would be disabled for the entire rest of the demonstration.
+
+#### Why the exploded view and the conflict presentation take turns
+
+The disputed region is a box that exists only where two property volumes
+interpenetrate. Separate those two volumes on screen and the region no longer lies
+inside either of them: it would hang in the gap between two boxes that visibly do
+not touch, stating the opposite of what it means. Rather than draw something false
+or silently hide it, the explosion levels are disabled while a conflict is being
+presented — visible and disabled with an explanation, like every other unavailable
+control — and the previous level is restored on dismissal.
+
+Floor explosion is still honoured for *placement*: everything the overlay draws
+sits at true cadastral coordinates plus the conflict floor's own
+`getExplodedOffsetM`, the same call the floor's plate and units make.
+
+#### The semantic hierarchy
+
+| Layer | Appearance | Why |
+|---|---|---|
+| Intersection volume | `#f0392c`, 46 % opacity, edges drawn through everything | The answer. It must out-rank the two red units it sits between. |
+| Conflicting units | `#c0453d`, full strength | Unchanged from Subphase E. |
+| Canonical ghost | `#cfdae4`, 5.5 % fill / 62 % edges | Deliberately *colourless* — every other hue means a state, and a remembered position is not a state. |
+| Selected unit | amber cage, layered on top | A different channel from fill: colour says what a property **is**, the cage says which one you **picked**. |
+| Everything else | fill × 0.05, edges × 0.3 | Structure, not objects. |
+
+Two restraints are worth stating because they were tempting to break. The
+intersection red is a *saturated signal red, not a fluorescent one*: the cheap way
+to out-rank `#c0453d` is a colour that could not occur in a building, and that
+reads as a rendering artefact rather than a finding — the scene stops looking like
+a cadastre and starts looking like a game. And nothing pulses, glows or animates:
+the scene already contains a translucent volume being claimed by two people, and
+dressing that up would make the strongest evidence in the demonstration look less
+true rather than more urgent.
+
+The intersection's edges use `depthTest: false`, which is normally a mistake.
+Here it is the point: the disputed volume is buried between two solid boxes and
+would otherwise be visible only from the two angles that happen to look down the
+gap. Conflict focus fades everything else to near-nothing precisely so that a
+shape drawn through the model reads as "inside there" rather than "in front".
+The volume's *faces* are coplanar with the units' faces by construction — that is
+what an intersection is — so the material carries a polygon offset, without which
+the most important object in the scene z-fights along every shared plane.
+
+#### Detection is not adjudication
+
+The panel gained two rows that are not figures, and they are the most important
+thing in the subphase:
+
+```
+  Rule     3D ownership volumes must not positively overlap
+  Status   Requires cadastral review
+
+  Detected → Source records compared → Officer review required
+           → Correct geometry → Revalidate
+
+  The system detects the conflict but does not decide legal ownership.
+```
+
+Everything above those rows is a finding of fact about geometry. Everything below
+concedes that a finding of fact about geometry is not a finding of law about
+people. A spatial validator can prove two records describe overlapping volumes. It
+cannot know which survey was wrong, which deed is older, which sale was registered
+first, or what a tribunal would decide — and a prototype that implied otherwise
+would be making a claim about *law* on the strength of arithmetic about boxes.
+
+The workflow is stored as data in `conflictPresentation.ts` rather than written
+out in the panel, because it is a claim about process and should be reviewable as
+one. Note where the human is: the system performs steps one and five; a cadastral
+officer performs steps two, three and four. The chain carries that distinction in
+its styling — filled chips for the automated steps, outlined for the manual ones —
+rather than in a footnote.
+
+#### Restore, and revalidation
+
+"Restore Valid Geometry" animates the property back over 900 ms. Revalidation is
+not a separate step and there is no button for it: `units` is a `useMemo` over
+`conflictProgress`, the validation report is a `useMemo` over `units`, so the
+engine re-runs on every frame of the return journey and the status flips back to
+TOPOLOGY VALID the instant the overlap falls below `OVERLAP_EPSILON_M`. The alert
+and the conflict panel disappear at the same moment, because both render only
+when the engine has actually found something. The ghost, the arrow and the red volume fade out over
+460 ms, the floors un-ghost, the camera returns to the remembered view, and the
+displaced explode/isolation/selection state comes back.
+
+#### What is checked, and why each check exists
+
+`simulation/conflictPresentationSelfCheck.ts` — 22 pure assertions. They exist
+because the failure mode here is the worst kind: everything still renders, nothing
+throws, and the demonstration confidently highlights a volume the validator never
+found.
+
+| Property | Why it could break |
+|---|---|
+| Deriving the presentation leaves the record byte-identical | A focus builder that normalised bounds in place |
+| Displacement equals the configured encroachment, on the shared-wall axis only | An arrow drawn from centres rather than from the vector |
+| Displacement is proportional at 0, ¼, ½, ¾, 1 | A presentation right at both ends and wrong in between looks correct in every screenshot and wrong in the only thing an audience watches |
+| Drawn intersection bounds **are** the validator's bounds | The renderer re-deriving the intersection |
+| Drawn volume **is** the validator's volume, and is the product of its own extents | A formatted figure drifting from the box |
+| Mesh size equals the engine's extents | Bounds and extents are two views of one region |
+| The disputed region lies inside **both** properties | A region that stuck out of one would be a rendering error wearing the demo's most persuasive clothes |
+| Ghost bounds are identical to the record's bounds | A ghost reconstructed by subtracting the displacement |
+| The ghost stays put while the property slides | A ghost that trailed the animation |
+| Progress 0 returns the canonical array **by reference** | Restore drifting instead of being an identity |
+| No conflict remains after restore | — |
+| Emphasis leaves the model alone at zero focus | A dimming rule that never fully switched off |
+| The framing reaches the canonical position | A camera that framed the answer and cropped the evidence |
+
+Run with the other five self-checks under `import.meta.env.DEV`, so the whole set
+is stripped from the production bundle.
+
+#### Files
+
+| File | Change |
+|---|---|
+| `validation/aabb.ts` | `VolumeIntersection.bounds`; `getIntersectionBox`, `getBoxCentre`, `getBoxSize`, `getBoxUnion` |
+| `validation/validateTopology.ts` | `OwnershipConflict.bounds` |
+| `simulation/conflictSimulation.ts` | `progress` parameter; `getEncroachmentShiftM`, `getDisplacementVectorM`; `CONFLICT_ANIMATION_MS`, `CONFLICT_RESTORE_MS` |
+| `simulation/conflictPresentation.ts` | **new** — the whole of geometry kind D |
+| `simulation/conflictPresentationSelfCheck.ts` | **new** — 22 checks |
+| `scene/ConflictOverlay.tsx` | **new** — ghost, arrow, intersection volume, three labels |
+| `scene/Building.tsx` | conflict-focus dimming, multiplied into isolation |
+| `scene/SceneViewer.tsx` | distributes the focus; renders the overlay after the units |
+| `scene/cameraPresets.ts` | the `conflict` preset and `conflictFraming` |
+| `scene/explodedView.ts` | `getSettledExplodeAmounts` |
+| `ui/ConflictBanner.tsx` | dimensions, displacement, rule, status, workflow, disclaimer — *superseded in Subphase G; this content now lives in `ui/ConflictPanel.tsx`* |
+| `ui/ViewControls.tsx` | explode levels disabled during conflict focus |
+| `animation/generationSelfCheck.ts` | `conflict` added to the preset fallback sweep |
+| `App.tsx` | the two ramps, the animated record, enter/exit focus with remembered state |
+| `index.css` | three scene labels, the widened panel, the workflow chain |
+
+---
+
+### 10.7 Subphase G — where the finding is presented
+
+#### The problem
+
+Subphase F made the conflict visible and then covered it up.
+
+By the end of F the 3D scene carried the whole argument: the two properties in
+signal red, the disputed region as a translucent red box occupying exactly the
+validator's own intersection bounds, the colourless ghost standing where the
+register says the moved property belongs, and an arrow from the ghost to the
+overridden position. Four pieces of evidence, all derived, all in one place.
+
+And in front of them sat `ConflictBanner` — a 430 px card, anchored top-centre
+over the canvas, carrying eight fields, a five-step resolution chain and two
+notes. On a 1440 px screen the middle column is roughly 800 px wide, so the card
+occupied over half of it, from the top edge down past the middle. The `conflict`
+camera preset frames both properties **and** the ghost, which puts the subject
+squarely in the centre of the viewport — directly behind the card describing it.
+
+Every figure on that card was true and every one of them was in the way. The
+demonstration's strongest picture was competing with its own caption, and the
+caption was winning because it was opaque.
+
+#### The split: *that* versus *what*
+
+The finding was divided along the only line that matters for placement — whether
+a reader needs it **while looking at the scene**, or **after looking at it**.
+
+| | Component | Where | Carries |
+|---|---|---|---|
+| **that** | `ui/ConflictAlert.tsx` | one line, top-centre over the canvas | the announcement and the intersection volume |
+| **what** | `ui/ConflictPanel.tsx` | docked at the top of the right-hand column | the eight fields, the resolution chain, the two notes |
+
+The alert reads:
+
+```
+⚠  SPATIAL OWNERSHIP CONFLICT DETECTED · 84.0 m³ overlap
+```
+
+The volume is carried up into it deliberately. `CONFLICT DETECTED` on its own is
+a claim; `84.0 m³ overlap` is a measurement, and the measurement costs eighteen
+characters and one line of a pill that occludes a strip of empty sky above the
+building. That is the whole of what the 3D viewer is now asked to give up.
+
+The alert quotes the **first** conflict's volume rather than the sum of all of
+them, because the panel below describes the first conflict. An alert quoting a
+total beside a panel quoting a part would be two numbers for one finding. Any
+remainder is reported as a count (`+1 more`), which is the honest way to say
+"and others" without implying they have been summarised.
+
+#### Why docked, and not a drawer
+
+A drawer sliding in from the right was the more theatrical option and was
+rejected on three grounds.
+
+1. **It reintroduces the thing being removed.** The point of Subphase G is one
+   fewer overlay, not a different one.
+2. **It would cover the pipeline and the inspector.** Those two panels are what
+   give the finding its context — which step of the workflow reported it, and
+   what the selected property's record says. A reader wants them *beside* the
+   conflict, not replaced by it.
+3. **It would imply state the model does not have.** A drawer opens and closes,
+   so an interface with one owes the user a control for it. This panel is present
+   exactly when `findOwnershipConflicts` returns a non-empty array and absent
+   otherwise. It has no state of its own, and a control suggesting it did would be
+   lying about the model.
+
+The right column was already the right place. It already scrolls
+(`.inspector-panel { overflow-y: auto }`), it already stacks cards at their
+natural heights with `align-content: start`, and it is already where every
+*statement about the record* lives. A conflict is a statement about the record.
+It is docked at the **top** of that column, above `PipelineStatus` and
+`PropertyInspector`, because it outranks both.
+
+#### The three levels of the same truth, now visibly separate
+
+| Level | Element | Says |
+|---|---|---|
+| the standing condition | `ValidationStatusBar` | the record as a whole is `TOPOLOGY INVALID` |
+| the announcement | `ConflictAlert` | there is a conflict, and it is 84.0 m³ |
+| the finding | `ConflictPanel` | which units, which floor, which extents, which rule, what happens next |
+
+None is derived from another by hand; all three read the same
+`validateTopology` / `findOwnershipConflicts` output. Subphase G did not add a
+level — it moved the third one somewhere it does not obscure the evidence for
+the first two.
+
+#### What was deliberately not touched
+
+Nothing in the 3D presentation. `ConflictOverlay.tsx`,
+`conflictPresentation.ts`, `conflictSimulation.ts`, `Building.tsx`,
+`SceneViewer.tsx`, `cameraPresets.ts` and `validateTopology.ts` are unchanged, so
+the four pieces of scene evidence behave exactly as Subphase F left them:
+
+- the two overlapping units in signal red,
+- the red intersection volume at the validator's own bounds,
+- the canonical ghost with its `CANONICAL POSITION` caption,
+- the displacement arrow and its `−4.0 m X` label.
+
+The `conflict` camera preset still frames both properties and the ghost; it now
+frames them into a viewport with a pill across the top instead of a card across
+the middle. The auto-focus behaviour, the remembered pre-conflict view state, the
+1.4 s animated record, the per-frame revalidation and the automatic status flip
+on restore are all untouched.
+
+The validation bar is untouched. The `Simulate` control that enters conflict mode
+is untouched. The three-column grid is untouched — the panel is a fourth card in
+a column that was designed for an unknown number of them.
+
+#### Accessibility: one announcement, not two
+
+`ConflictAlert` is `role="alert"` — assertive, interrupting, which an ownership
+dispute in a register warrants. `ConflictPanel` is `role="region"` with an
+`aria-label`, **not** a second alert: two assertive live regions appearing
+together would interrupt a screen reader twice for one event. The alert says what
+happened; the panel is the landmark the listener is then sent to.
+
+The panel also drops `pointer-events: none`. The floating card needed it so that
+an orbit drag passing under it still reached the canvas. Nothing overlaps the
+canvas any more, so the panel's text can be selected and quoted — which matters
+for figures somebody may want to copy.
+
+#### Files
+
+| File | Change |
+|---|---|
+| `ui/ConflictAlert.tsx` | **new** — the one-line alert over the canvas |
+| `ui/ConflictPanel.tsx` | **new** — the docked detail panel (the former banner's content) |
+| `ui/ConflictBanner.tsx` | emptied to a tombstone (`export {}`) explaining the split; safe to delete |
+| `App.tsx` | renders `ConflictAlert` in the scene panel and `ConflictPanel` first in the inspector column |
+| `index.css` | `.conflict-banner*` replaced by `.conflict-alert*` and `.conflict-panel*`; `.conflict-workflow*` unchanged |
+
+No module gained a dependency, no geometry changed, and no self-check needed
+revision — Subphase G moves markup and CSS only.
+
+---
+
+## 11. Repository shape
+
+### As built (Phases 1–10 — this exists now)
 
 ```
 3d-ulpin/
@@ -1352,32 +3105,120 @@ a partial implementation than as an honest absence.
    ├─ App.tsx                # page shell + Phase 5: owns the units array and the selection
    │                       # Phase 6: runs the identifier self-check in dev
    │                       # Phase 7: three-column layout; passes DEMO_PARCEL to the map
+   │                       # Phase 8: owns isGenerated; measures the footprint once
+   │                       # Phase 9: owns the progress ramp, the exploded flag and
+   │                       # the camera request; derives GenerationVisuals once
    ├─ index.css              # dark theme; global styles
    │                         # Phase 7: the three-column viewer grid + map styling
+   │                         # Phase 8: the generate bar and the pipeline card
+   │                         # Phase 9: view controls, generation status strip,
+   │                         # the active pipeline state, 3D label styling
    ├─ vite-env.d.ts          # tells TypeScript about Vite-specific imports (e.g. CSS)
+   ├─ animation/             # timing, added Phase 9 — no React, no Three.js, no DOM
+   │  ├─ easing.ts           # clamp01, subProgress, LINEAR / EASE_OUT_CUBIC /
+   │  │                      # EASE_IN_OUT_CUBIC / pulse — stable module constants
+   │  ├─ generationTimeline.ts # THE SEQUENCE: getGenerationVisuals(progress,
+   │  │                      # floorCount) → every opacity, height and reveal;
+   │  │                      # stage ids and their status wording
+   │  └─ generationSelfCheck.ts # samples the timeline in 200 steps: monotonic,
+   │                          # bottom-up, exact at both ends; dev-only runner
+   ├─ geometry/              # the footprint, added Phase 8 — no React, no Three.js
+   │  ├─ footprint.ts        # MetricPoint2D, BuildingFootprint, bounds/width/depth/
+   │  │                      # area/centroid, the east-north → x/z axis convention
+   │  └─ footprintSelfCheck.ts # pure literal-answer checks; dev-only runner
    ├─ ulpin/                 # the identifier, added Phase 6 — no React, no Three.js
    │  ├─ parcelIdentity.ts   # ParcelIdentity, DEMO_PARCEL_IDENTITY, parent-parcel text
    │  ├─ generateUlpin.ts    # generatePrototype3DULPIN(), padding, uniqueness guard
    │  └─ ulpinSelfCheck.ts   # pure known-answer + uniqueness checks; dev-only runner
+   ├─ simulation/            # the conflict override, added Subphase D — pure
+   │  ├─ conflictSimulation.ts # findEncroachmentPair (geometric adjacency),
+   │  │                      # applyConflictSimulation (new array; input by
+   │  │                      # reference when off). No validator import
+   │  └─ conflictSelfCheck.ts # canonical untouched, engine discovers it,
+   │                          # restore is exact, + the status hierarchy
+   ├─ validation/            # the topology engine, added Subphase C — pure
+   │  ├─ geometry2d.ts       # point-in-ring (boundary-tolerant), segment
+   │  │                      # crossing, ring containment, winding, simplicity
+   │  ├─ aabb.ts             # 3D overlap extents + intersection volume;
+   │  │                      # touching is NOT overlapping
+   │  ├─ types.ts            # ValidationResult / TopologyReport; no strings
+   │  ├─ validateTopology.ts # the six rules; findOwnershipConflicts
+   │  └─ validationSelfCheck.ts # healthy model clean + six breakages caught
+   ├─ workflow/              # the pipeline, added Phase 8 — pure, no React
+   │  └─ pipelineSteps.ts    # the five steps as derived data; no view decides state
+   │                          # Phase 9: a third state, `active`, driven by the stage
    ├─ data/                  # demo datasets, added Phase 7 — no React, no Leaflet
-   │  └─ demoParcel.ts       # DemoParcel, metre→lat/lng conversion, shoelace area,
+   │  └─ demoParcel.ts       # DemoParcel, metre→lat/lng conversion, shoelace adapter,
    │                         # DEMO_PARCEL built from the shared parcel identity
+   │                         # Phase 8: DEMO_BUILDING_FOOTPRINT_M — the authoritative
+   │                         # horizontal geometry; buildingFootprintMetric on the parcel
    ├─ map/                   # everything 2D (added Phase 7)
    │  ├─ GISMap.tsx          # <MapContainer>: tiles, parcel, footprint, centre point
    │  ├─ MapLegend.tsx       # the key; swatches read from parcelStyles.ts
    │  ├─ ParcelInfoPanel.tsx # the parcel record beneath the map
+   │  │                      # Phase 8: shows the footprint's measured plan dimensions
    │  └─ parcelStyles.ts     # one source for layer colours, tile URL, zoom limits
    ├─ scene/                 # everything 3D (added Phase 2)
    │  ├─ buildingConfig.ts   # Phase 3: the config type, floor maths, total height
+   │  │                      # Phase 8: width/depth REMOVED — vertical + grid only
    │  ├─ unitLayout.ts       # Phase 4: ApartmentUnit, the 2 x 2 subdivision, centres
    │  │                      # Phase 5: propertyType, findUnitById()
    │  │                      # Phase 6: prototypeUlpin + parentParcelId per unit
+   │  │                      # Phase 8: subdivision derives from the footprint bounds
+   │  ├─ footprintGeometry.ts # Phase 8: the only file that knows both the footprint
+   │  │                      # and THREE — Shape, ShapeGeometry, ExtrudeGeometry,
+   │  │                      # and the rotation/sign pair that lays them down
+   │  │                      # Phase 9: createFloorSlabGeometry — the same extrusion
+   │  ├─ explodedView.ts     # Phase 9: the display-only floor offset. Pure. The
+   │  │                      # logical elevations are never touched
+   │  │                      # Subphase A: + horizontal unit offsets, derived from
+   │  │                      # each unit's own position on its floor; ExplodeMode;
+   │  │                      # getUnitDisplayOffsetM — the ONE shared offset
+   │  ├─ explodedSelfCheck.ts # Subphase A: derived directions, and the check that
+   │  │                      # the transform never writes to the model
+   │  ├─ floorIsolation.ts   # Subphase B: per-floor fill/edge scales, targeting
+   │  │                      # and the derived isolated-layer summary. Pure
+   │  ├─ floorIsolationSelfCheck.ts # Subphase B: the priority rule, the derived
+   │  │                      # indicator figures, and no-mutation
+   │  ├─ unitStatus.ts       # Subphase E: conflict > selected > hovered >
+   │  │                      # normal. The ONE place the ordering exists
+   │  ├─ cameraPresets.ts    # Phase 9: four named views as pure tuple arithmetic;
+   │  │                      # no THREE import, nothing hard-coded to this building
+   │  ├─ CameraRig.tsx       # Phase 9: the only file that turns a view into motion;
+   │  │                      # owns controls.target, refs only, no state
    │  ├─ SceneViewer.tsx     # <Canvas>: camera, lights, fog, OrbitControls
    │  │                      # Phase 5: the click-vs-orbit-drag decision
+   │  │                      # Phase 8: framing derived from the footprint; two states
+   │  │                      # Phase 9: distributes GenerationVisuals; three lights
+   │  ├─ FootprintPad.tsx    # Phase 8: the 2D cadastral plan, drawn on the ground
+   │  │                      # Phase 9: base plane + corner ticks — the whole source state
+   │  ├─ BuildingShell.tsx   # Phase 8: the plan extruded to full height — the envelope
+   │  │                      # Phase 9: heightFraction — the extrusion, animated
+   │  ├─ FloorSlabs.tsx      # Phase 9: one 12 cm plate per floor; the stratification
+   │  ├─ SceneLabels.tsx     # Phase 9: floor labels in exploded view, selected unit only
    │  ├─ Building.tsx        # one mesh per unit; Phase 5: click + hover + highlight
+   │  │                      # Phase 8: an opacity prop, used only during the fade
+   │  │                      # Phase 9: per-floor reveal, exploded offset, shared edges
    │  └─ Ground.tsx          # ground plane + 1 m reference grid
    └─ ui/                    # HTML overlays and panels (added Phase 3)
-      ├─ BuildingSummary.tsx # building dimensions + property-unit read-out
+      ├─ BuildingSummary.tsx # Phase 8: footprint measured from the polygon; two states
+      ├─ GenerateCadastreControl.tsx # Phase 8: the Generate / Reset control
+      │                        # Phase 9: a third, disabled "Generating…" state
+      ├─ FloorIsolationPanel.tsx # Subphase B: the isolated-layer indicator
+      ├─ ValidationStatusBar.tsx # Subphase C: the chips + verdict. No numbers
+      ├─ ValidationDetails.tsx # Subphase C: every check and its figures
+      ├─ ConflictAlert.tsx   # Subphase G: the one-line alert over the canvas
+      ├─ ConflictPanel.tsx   # Subphase D: the finding, with the working shown
+      │                        # Subphase G: docked in the right column, not floating
+      ├─ ConflictBanner.tsx  # Subphase G: tombstone; superseded by the two above
+      ├─ OwnershipHierarchy.tsx # Subphase E: parcel → floor → unit → identifier
+      ├─ GenerationStatus.tsx # Phase 9: stage name + determinate bar, transition only
+      ├─ ViewControls.tsx    # Phase 9: the four camera presets + the exploded toggle
+      ├─ PipelineStatus.tsx  # Phase 8: the five-step pipeline, rendered from data
+      │                        # Phase 9: the active state and the status line
+      ├─ useFadeProgress.ts  # Phase 8: the 0→1 generation ramp; rAF, no library
+      │                        # Phase 9: generalised — reverse duration + easing;
+      │                        # the ONLY animation driver in the application
       └─ PropertyInspector.tsx # Phase 5: the selected unit's cadastral record
                                # Phase 6: the prototype 3D ULPIN block, shown first
                                # Phase 7: now a real column, no longer a floating overlay
@@ -1425,6 +3266,26 @@ the canvas, not a 3D object. Keeping the boundary strict means the 3D code never
 has to know a panel exists — it only exports the config, and the panel derives its
 own values from it.
 
+**Why `geometry/` is separate from `scene/` (Phase 8).** `scene/` is the
+renderer. `geometry/footprint.ts` is a description of *land* — a polygon and the
+measurements taken from it — and it is consumed by the map, the panels and the
+pipeline as much as by the 3D viewer. Putting it in `scene/` would say the
+footprint belongs to the 3D view, which is the exact inversion the phase
+removes. It also keeps the module free of React and Three.js, which is what lets
+the Phase 8 arithmetic be checked in bare Node.
+
+**Why `scene/footprintGeometry.ts` sits in `scene/` even though it is geometry.**
+Because it imports `THREE`. It is the *bridge*: the one file that knows both a
+`BuildingFootprint` and a `BufferGeometry`, and it owns the shape-plane sign
+convention and the rotation that must travel with it. Everything above it is
+metres; everything below is meshes.
+
+**Why `workflow/` is one file and not a folder of state machinery.** The pipeline
+is derived state — a function of the model, not a thing tracked alongside it. One
+pure function returning five records is the whole of it, and making it a module
+rather than JSX is what stops a view from claiming a step is complete when the
+model says it is not.
+
 ### Planned additions (later phases)
 
 ```
@@ -1462,9 +3323,14 @@ their only consumer; moving them early would be structure without a reason.
 `npm run build` runs `tsc --noEmit && vite build`, so a type error fails the build
 rather than shipping silently — Vite alone strips types without checking them.
 
+**Phase 8 added no dependencies.** The extrusion uses `THREE.Shape` /
+`ExtrudeGeometry` / `ShapeGeometry`, which ship with `three`; the generation
+transition is plain `requestAnimationFrame`. The lockfile is unchanged by this
+phase — the outstanding `npm install` is still Phase 7's.
+
 ---
 
-## 9. Why we are building incrementally
+## 12. Why we are building incrementally
 
 The build is split into small phases, and **each phase must leave the project runnable, documented and committed** before the next one starts.
 

@@ -1,5 +1,5 @@
 import { getUnitCenter, type ApartmentUnit } from '../scene/unitLayout'
-import { PROTOTYPE_ENCODING_NOTE } from '../ulpin/parcelIdentity'
+import OwnershipHierarchy from './OwnershipHierarchy'
 
 /**
  * The property inspector: the cadastral record of whichever unit is selected.
@@ -14,6 +14,17 @@ import { PROTOTYPE_ENCODING_NOTE } from '../ulpin/parcelIdentity'
  * config changes, this panel changes with it, because it is reading the same
  * generated record the geometry was built from rather than a second description
  * of the same unit that someone has to remember to keep in step.
+ *
+ * WHICH GEOMETRY IT SHOWS
+ * The unit handed to this panel is a **display unit** — canonical, or canonical
+ * with a simulated conflict override applied (see
+ * `simulation/conflictSimulation.ts`). That is correct and deliberate: a
+ * simulated encroachment is a hypothetical *record*, so the record panel should
+ * show it, and it is the same geometry the validator was pointed at. The
+ * exploded view and floor isolation are a different kind of thing entirely —
+ * they change where a box is *drawn* and never reach this panel, which is why
+ * the elevation here reads 6.0–9.0 m whether or not the floors are separated on
+ * screen. ARCHITECTURE §10.0 has the full separation.
  */
 
 const EMPTY_MESSAGE =
@@ -36,38 +47,51 @@ function span(min: number, max: number): string {
  * "nothing selected" case is handled once, by the parent, instead of guarding
  * every field.
  */
-function UnitRecord({ unit }: { unit: ApartmentUnit }) {
+function UnitRecord({ unit, isConflicted }: { unit: ApartmentUnit; isConflicted: boolean }) {
   // Derived from the bounds by the same function the renderer uses to place the
   // mesh, so the point named here is exactly the point the box is centred on.
   const [centroidX, centroidY, centroidZ] = getUnitCenter(unit)
 
   return (
     <>
-      {/* The identifier block leads the panel and is the only element given
-          display weight: everything below it *describes* the property, this
-          *names* it. Note that both strings are read straight off the unit —
-          the inspector displays an identifier, it never builds one. */}
-      <section className="ulpin-block">
-        <h3 className="ulpin-label">Prototype 3D ULPIN</h3>
-        <p className="ulpin-value">{unit.prototypeUlpin}</p>
-        <p className="ulpin-note" role="note">
-          {PROTOTYPE_ENCODING_NOTE}
+      {/* The dispute badge, when the validation engine has flagged this unit.
+          It sits *above* the record and **replaces nothing**: a contested
+          property still has an identifier, an area, a volume and an elevation,
+          and a register that hid them the moment a dispute arose would be
+          useless at exactly the moment it was needed. The badge adds a fact;
+          it does not censor the others. */}
+      {isConflicted && (
+        <p className="inspector-conflict" role="alert">
+          <span className="inspector-conflict-glyph" aria-hidden="true">
+            ⚠
+          </span>
+          Conflict — disputed volume
         </p>
-      </section>
+      )}
+
+      {/* The ownership chain leads the panel: parcel → floor → unit →
+          identifier. It carries the same display weight the standalone ULPIN
+          card used to, and it earns more of it — the identifier laid out as the
+          foot of a descent reads as a *derivation* rather than a reference
+          number. See `OwnershipHierarchy.tsx`. */}
+      <OwnershipHierarchy unit={unit} />
+
+      {/* The validation status of this one volume, immediately under the chain
+          that names it. Two words when there is nothing wrong: the default state
+          of a register is that it is consistent, and a panel that celebrated
+          validity would make the unremarkable case the loudest one. */}
+      {!isConflicted && (
+        <p className="inspector-validated">
+          <span className="inspector-validated-glyph" aria-hidden="true">
+            ✓
+          </span>
+          No conflicts on this volume
+        </p>
+      )}
 
       <dl className="summary-list">
-        <div className="summary-row">
-          <dt>Parent parcel</dt>
-          <dd className="mono">{unit.parentParcelId}</dd>
-        </div>
-        <div className="summary-row">
-          <dt>Unit</dt>
-          <dd>{unit.unitNumber}</dd>
-        </div>
-        <div className="summary-row">
-          <dt>Floor</dt>
-          <dd>{unit.floorLevel}</dd>
-        </div>
+        {/* Parent parcel, floor and unit are the ownership chain above and are
+            deliberately not repeated here — one fact, one place on the panel. */}
         <div className="summary-row">
           <dt>Property type</dt>
           <dd>{unit.propertyType}</dd>
@@ -129,9 +153,17 @@ function UnitRecord({ unit }: { unit: ApartmentUnit }) {
 interface PropertyInspectorProps {
   /** The selected unit, or `null` when nothing is selected. */
   unit: ApartmentUnit | null
+  /**
+   * Whether the validation engine has flagged this unit.
+   *
+   * Passed in rather than derived: the inspector does not decide what a conflict
+   * is, and this is the same `conflictedUnitIds` list the 3D scene colours from,
+   * so a red box and a badged record can never disagree.
+   */
+  isConflicted?: boolean
 }
 
-function PropertyInspector({ unit }: PropertyInspectorProps) {
+function PropertyInspector({ unit, isConflicted = false }: PropertyInspectorProps) {
   return (
     // aria-live: screen readers announce the record when the selection changes.
     <aside
@@ -144,7 +176,7 @@ function PropertyInspector({ unit }: PropertyInspectorProps) {
       {unit === null ? (
         <p className="inspector-empty">{EMPTY_MESSAGE}</p>
       ) : (
-        <UnitRecord unit={unit} />
+        <UnitRecord unit={unit} isConflicted={isConflicted} />
       )}
     </aside>
   )

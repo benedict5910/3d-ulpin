@@ -28,11 +28,14 @@ body {
   overflow: hidden;
 }
 
-/* Three rows: header, viewer (takes all remaining height), footer. */
+/* Four rows since Subphase C: header, the topology status bar, the viewer
+   (which takes all remaining height), footer. The validation bar sits above the
+   working columns because it is a standing condition of everything below it,
+   not a property of any one panel. */
 .app {
   height: 100%;
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto auto 1fr auto;
 }
 
 .app-header {
@@ -97,12 +100,22 @@ body {
   min-height: 0;
 }
 
-/* RIGHT — the property inspector. Scrolls on its own if the record is taller
-   than the row; the page itself never scrolls. */
+/* RIGHT — the pipeline status and the property inspector. Scrolls on its own
+   if the record is taller than the row; the page itself never scrolls.
+
+   Phase 8 puts two cards in this column. `align-content: start` so they sit at
+   the top rather than stretching to fill the height, and a grid gap rather
+   than a margin on either card, so neither owns the space between them. */
 .inspector-panel {
   min-width: 0;
   min-height: 0;
   padding: 16px;
+  display: grid;
+  /* No explicit row template: Subphase C can add a third card (the validation
+     checks) and Subphase E a fourth, and `align-content: start` already keeps
+     them stacked at the top at their natural heights. */
+  align-content: start;
+  gap: 12px;
   overflow-y: auto;
   border-left: 1px solid var(--border);
 }
@@ -413,6 +426,1253 @@ body {
   color: var(--muted);
 }
 
+/* ── Phase 8: the 2D → 3D generation workflow ───────────────────────────── */
+
+/* Text that exists only for assistive technology. Clipped to a 1px box rather
+   than `display: none`, which screen readers skip entirely. Used to carry each
+   pipeline step's state in words, so the meaning never rests on a colour. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* The generation control, floating at the foot of the 3D viewer — over the
+   view it changes, not in a panel beside it.
+
+   Unlike the building summary it does **not** set `pointer-events: none`. The
+   summary is informational and must let an orbit drag pass through to the
+   canvas; this bar *is* the interaction, so it keeps the pointer. It is kept
+   small and centred at the foot of the view for exactly that reason — every
+   pixel it occupies is a pixel the camera cannot be dragged from. */
+.generate-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 14px;
+  max-width: calc(100% - 32px);
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  backdrop-filter: blur(6px);
+}
+
+.generate-caption {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  color: var(--muted);
+}
+
+/* Once generated the caption reports an outcome rather than a prompt, so it
+   takes the accent and the same dot the footer status uses. */
+.generate-caption-done {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--accent);
+}
+
+/* The one primary action in the application, styled as such: the accent as a
+   fill rather than as text, which nothing else in the interface does. */
+.generate-button {
+  flex: none;
+  padding: 9px 18px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: var(--accent);
+  color: #06240f;
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: filter 120ms ease;
+}
+
+.generate-button:hover {
+  filter: brightness(1.08);
+}
+
+/* A visible focus ring, offset clear of the fill. Keyboard users get the same
+   affordance as the pointer's hover state. */
+.generate-button:focus-visible,
+.generate-reset:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+/* Reset is a secondary action — it undoes rather than does — so it is a quiet
+   outline button. It exists so the transformation can be demonstrated twice. */
+.generate-reset {
+  flex: none;
+  padding: 7px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+
+.generate-reset:hover {
+  color: var(--text);
+  border-color: var(--muted);
+}
+
+/* The building summary's two Phase 8 additions: the pre-generation placeholder
+   where the unit figures will go, and the note about the rectangular grid. */
+.summary-pending,
+.summary-note {
+  margin: 0;
+  font-size: 0.6875rem;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.summary-note {
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--border);
+  font-style: italic;
+}
+
+/* ── The pipeline status card ───────────────────────────────────────────── */
+
+.pipeline {
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+/* The heading carries a running count, pushed to the far end of the same line. */
+.pipeline .summary-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pipeline-count {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+}
+
+/* An ordered list, unnumbered: the sequence is carried by the connecting rule
+   between the markers, which shows it more directly than digits would. */
+.pipeline-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 2px;
+}
+
+/* Two columns: the marker rail, and the step. The rail is a fixed width so
+   every marker lines up regardless of how long a label wraps. */
+.pipeline-step {
+  position: relative;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  padding: 5px 0;
+}
+
+/* The line joining one marker to the next. Drawn from each step except the
+   last, downward, behind the markers — so the list reads as a sequence rather
+   than as five unrelated rows. */
+.pipeline-step:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  left: 8px;
+  top: 17px;
+  bottom: -3px;
+  width: 1px;
+  background: var(--border);
+}
+
+.pipeline-marker {
+  position: relative;
+  z-index: 1;
+  width: 9px;
+  height: 9px;
+  margin: 5px 0 0 2px;
+  border-radius: 50%;
+  border: 1px solid var(--muted);
+  background: var(--bg);
+}
+
+/* Complete: filled with the accent, with a soft halo so it reads at a glance
+   against the connecting rule. */
+.pipeline-step-complete .pipeline-marker {
+  border-color: var(--accent);
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.16);
+}
+
+/* Pending: a hollow ring, and the label dimmed. Two channels again — a colour
+   difference alone would not survive a monochrome projector at a demo. */
+.pipeline-step-pending .pipeline-label {
+  color: var(--muted);
+}
+
+.pipeline-body {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.pipeline-label {
+  font-size: 0.78125rem;
+  color: var(--text);
+}
+
+/* The evidence line: small, monospaced digits, allowed to wrap rather than
+   clip — a truncated identifier is worse than a two-line one. */
+.pipeline-detail {
+  font-size: 0.6875rem;
+  line-height: 1.35;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+/* ── Phase 9: presentation — animation, camera, exploded view ───────────── */
+
+/* The generation status strip, across the top of the 3D viewer, present only
+   while the transition is running.
+
+   Centred at the top rather than beside the generate bar at the bottom: the two
+   are read at different moments and putting them together would mean the
+   caption for the animation sits under the button that started it, where the
+   presenter's own cursor is. `pointer-events: none` throughout — it is a
+   caption, and every pixel of the viewer that can be dragged should be. */
+.generation-status {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  display: grid;
+  gap: 7px;
+  width: min(320px, calc(100% - 32px));
+  padding: 9px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+}
+
+.generation-status-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.75rem;
+  letter-spacing: 0.02em;
+  color: var(--text);
+}
+
+.generation-status-percent {
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+}
+
+/* A determinate bar. The fill is a full-width element scaled on X rather than a
+   width that changes: a transform is composited on the GPU, a width is a layout
+   pass, and sixty layout passes a second over a live WebGL canvas is the one
+   place in this interface that would actually be felt. */
+.generation-status-track {
+  display: block;
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(142, 160, 181, 0.22);
+  overflow: hidden;
+}
+
+.generation-status-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transform-origin: left center;
+}
+
+/* The view controls, top right of the 3D viewer.
+   Deliberately the opposite corner from the building summary and the opposite
+   end from the generate bar: what changes the model is at the bottom, what
+   changes the view is at the top, and nothing is within a slip of the other. */
+.view-controls {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 2;
+  display: grid;
+  justify-items: stretch;
+  gap: 8px;
+}
+
+/* The four presets as one segmented control, because they are four values of
+   one setting rather than four separate actions. */
+.view-preset-group {
+  display: flex;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  backdrop-filter: blur(6px);
+}
+
+.view-preset {
+  padding: 6px 11px;
+  border: 0;
+  border-right: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.6875rem;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 120ms ease, background-color 120ms ease;
+}
+
+.view-preset:last-child {
+  border-right: 0;
+}
+
+.view-preset:hover:not(:disabled) {
+  color: var(--text);
+  background: rgba(142, 160, 181, 0.1);
+}
+
+/* The current view. Marked by a tinted fill *and* by weight, so it survives a
+   projector that has flattened the colour difference. */
+.view-preset[aria-pressed='true'] {
+  color: var(--text);
+  font-weight: 600;
+  background: rgba(74, 222, 128, 0.14);
+}
+
+/* Disabled, not hidden: the control stays in place and teaches what would
+   unlock it. See `ui/ViewControls.tsx`. */
+.view-preset:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Subphase A: the explosion levels are a second segmented control, not a
+   toggle. Three ordered values of one setting — Stacked → Floors → Units —
+   which is what a segmented control is for, and what a checkbox is not.
+
+   Visually identical to the camera group above it on purpose: they are the same
+   kind of thing (how to look at the model) and they sit together. The accent
+   tint marks the current level in both. */
+.view-explode-group .view-preset[aria-pressed='true'] {
+  color: var(--accent);
+}
+
+/* The honesty line under the view controls. Small, italic, and present only
+   while an explosion is active — a permanent disclaimer is a disclaimer nobody
+   reads. `pointer-events: none` so it never intercepts a drag meant for the
+   canvas behind it. */
+.view-note {
+  margin: 0;
+  max-width: 232px;
+  padding: 0 2px;
+  font-size: 0.625rem;
+  font-style: italic;
+  line-height: 1.4;
+  text-align: right;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.view-preset:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Subphase B: the floor-isolation control. Same segmented shape as the two
+   groups above it, one more row. It can grow to a dozen buttons on a taller
+   building, so it is allowed to wrap. */
+.view-floor-group {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  border-radius: 10px;
+}
+
+.view-floor-group .view-preset[aria-pressed='true'] {
+  color: var(--accent);
+}
+
+/* The isolated-layer indicator, under the building summary on the left. Same
+   card language as the summary deliberately: it is the same model, read at a
+   narrower scale. `pointer-events: none` for the same reason the summary has
+   it — the panel is informational and must not swallow an orbit drag. */
+.isolation-panel {
+  position: absolute;
+  top: 176px;
+  left: 16px;
+  min-width: 218px;
+  padding: 12px 16px 13px;
+  border: 1px solid rgba(74, 222, 128, 0.32);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  background: var(--panel);
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+}
+
+.isolation-kicker {
+  margin: 0;
+  font-size: 0.5625rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.isolation-floor {
+  margin: 3px 0 9px;
+  font-size: 1.0625rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text);
+}
+
+/* Labels projected into the 3D scene by drei's <Html>. Styled here rather than
+   inline so they inherit the interface's typography and can be adjusted in one
+   place; `pointer-events: none` is set on the wrapper in the component so a
+   label can never swallow a click meant for the unit beneath it. */
+.scene-label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: rgba(11, 15, 20, 0.88);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 0.75rem;
+  line-height: 1.2;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  user-select: none;
+}
+
+/* Floor labels are structure, so they stay quiet. */
+.scene-label-floor {
+  padding: 2px 7px;
+  color: var(--muted);
+  font-size: 0.6875rem;
+}
+
+/* Except the isolated one, which is the subject of the view and takes the
+   accent — matching the indicator panel that names the same floor. */
+.scene-label-isolated {
+  border-color: rgba(74, 222, 128, 0.45);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* The selected unit's label takes the selection colour, so the box, the cage
+   and the label are unmistakably one thing. */
+.scene-label-unit {
+  border-color: rgba(217, 155, 63, 0.5);
+  color: #f7d79b;
+  font-weight: 600;
+}
+
+.scene-label-sub {
+  font-size: 0.625rem;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+/* ── Phase 10: the three conflict-presentation labels ─────────────────────
+
+   They form a deliberate three-step hierarchy in weight, matching the
+   hierarchy of the geometry they name: the disputed volume is the loudest
+   object in the scene and gets the loudest label; the ghost is the quietest
+   object and gets the quietest label; the displacement sits between them.
+
+   Nothing here pulses, glows or animates. The scene already contains a
+   translucent red volume being claimed by two people; a label that flashed
+   would make the strongest evidence in the demonstration look like a
+   screensaver. */
+
+/* "Canonical position" — a caption on something that is barely there. Grey,
+   lower-case-weight, and quieter than a floor label: it names an absence. */
+.scene-label-ghost {
+  padding: 2px 7px;
+  border-color: rgba(207, 218, 228, 0.32);
+  background: rgba(11, 15, 20, 0.72);
+  color: #b6c4d2;
+  font-size: 0.625rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* "+4.0 m X" — a measurement, so it reads as one: the same grey as the arrow
+   it labels, monospaced like every other figure in the interface. */
+.scene-label-displacement {
+  border-color: rgba(219, 230, 240, 0.4);
+  color: #dbe6f0;
+  font-size: 0.6875rem;
+  font-weight: 600;
+}
+
+/* "84.0 m³ OVERLAP" — the headline of the whole demonstration. The only label
+   in the project allowed the conflict red, and it is stacked over its own
+   working (4.00 × 7.00 × 3.00 m) so the figure can be checked at a glance. */
+.scene-label-overlap {
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 5px 11px;
+  border-color: rgba(240, 57, 44, 0.6);
+  background: rgba(38, 12, 10, 0.92);
+  color: #ffd2cb;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.scene-label-overlap .scene-label-sub {
+  color: #d29a95;
+  letter-spacing: 0.02em;
+}
+
+/* The pipeline's status line: what the system is doing, above what the steps
+   are. Sits between the heading and the list, separated by nothing but space. */
+.pipeline-status-line {
+  margin: -4px 0 10px;
+  font-size: 0.6875rem;
+  line-height: 1.35;
+  color: var(--accent);
+}
+
+/* A step under way. A ring with a filled core and a slow halo — distinct in
+   *shape* from the solid disc of "complete" and the empty ring of "pending",
+   because a demo projector may render all three the same colour. */
+.pipeline-step-active .pipeline-marker {
+  border-color: var(--accent);
+  background: var(--bg);
+  box-shadow:
+    inset 0 0 0 2px var(--accent),
+    0 0 0 3px rgba(74, 222, 128, 0.14);
+  animation: pipeline-pulse 1.1s ease-in-out infinite;
+}
+
+.pipeline-step-active .pipeline-label {
+  color: var(--text);
+}
+
+.pipeline-step-active .pipeline-detail {
+  color: var(--accent);
+}
+
+@keyframes pipeline-pulse {
+  0%,
+  100% {
+    box-shadow:
+      inset 0 0 0 2px var(--accent),
+      0 0 0 2px rgba(74, 222, 128, 0.1);
+  }
+  50% {
+    box-shadow:
+      inset 0 0 0 2px var(--accent),
+      0 0 0 5px rgba(74, 222, 128, 0.2);
+  }
+}
+
+/* A disabled primary action, for the two seconds the generation is running. */
+.generate-button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.generate-button:disabled:hover {
+  filter: none;
+}
+
+/* The animation machinery in `animation/` already honours this preference by
+   jumping to the end state. The purely decorative CSS animation has to be told
+   separately, because nothing in JavaScript drives it. */
+@media (prefers-reduced-motion: reduce) {
+  .pipeline-step-active .pipeline-marker {
+    animation: none;
+  }
+}
+
+/* ── Subphase C: the topology validation bar ────────────────────────────── */
+
+/* One line, always present, never in the way. Chips on the left, the verdict and
+   the details toggle on the right. It is allowed to wrap on a narrow window
+   rather than scroll or clip — a validation state that is partly off-screen is
+   a validation state nobody trusts. */
+.validation-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 8px 28px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(13, 19, 26, 0.5);
+}
+
+.validation-bar-idle {
+  padding-top: 9px;
+  padding-bottom: 9px;
+}
+
+.validation-idle {
+  font-size: 0.6875rem;
+  font-style: italic;
+  color: var(--muted);
+}
+
+.validation-chips {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  flex: 1 1 auto;
+}
+
+.validation-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  letter-spacing: 0.01em;
+  color: var(--muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The glyph is the second, non-colour channel — a tick, a bang, a cross. A
+   projector that flattens green and red to one grey still shows the difference. */
+.validation-glyph {
+  font-size: 0.75rem;
+  line-height: 1;
+}
+
+.validation-chip-pass {
+  border-color: rgba(74, 222, 128, 0.28);
+  color: var(--text);
+}
+
+.validation-chip-pass .validation-glyph {
+  color: var(--accent);
+}
+
+.validation-chip-warning {
+  border-color: rgba(217, 155, 63, 0.45);
+  background: rgba(217, 155, 63, 0.08);
+  color: #f0c887;
+}
+
+.validation-chip-fail {
+  border-color: rgba(232, 92, 84, 0.55);
+  background: rgba(232, 92, 84, 0.12);
+  color: #f5a6a1;
+  font-weight: 600;
+}
+
+/* The verdict. The one place in the interface that shouts, and only when it has
+   something to shout about. */
+.validation-headline {
+  margin: 0;
+  flex: none;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.validation-headline-valid {
+  border: 1px solid rgba(74, 222, 128, 0.4);
+  background: rgba(74, 222, 128, 0.12);
+  color: var(--accent);
+}
+
+.validation-headline-warning {
+  border: 1px solid rgba(217, 155, 63, 0.5);
+  background: rgba(217, 155, 63, 0.14);
+  color: #e8b76a;
+}
+
+.validation-headline-conflict {
+  border: 1px solid rgba(232, 92, 84, 0.6);
+  background: rgba(232, 92, 84, 0.18);
+  color: #ff8b83;
+}
+
+.validation-detail-toggle {
+  flex: none;
+  padding: 4px 11px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.6875rem;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+
+.validation-detail-toggle:hover {
+  color: var(--text);
+  border-color: var(--muted);
+}
+
+.validation-detail-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ── The validation details card, in the right-hand column ───────────────── */
+
+.validation-details {
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.validation-details .summary-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.validation-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 10px;
+}
+
+/* A left rule per item, coloured by verdict — a rule rather than a background
+   so a long list of passes stays quiet and the one failure is unmissable. */
+.validation-item {
+  padding-left: 9px;
+  border-left: 2px solid var(--border);
+}
+
+.validation-item-pass {
+  border-left-color: rgba(74, 222, 128, 0.5);
+}
+
+.validation-item-warning {
+  border-left-color: rgba(217, 155, 63, 0.7);
+}
+
+.validation-item-fail {
+  border-left-color: #e85c54;
+}
+
+.validation-item-message {
+  margin: 0 0 4px;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--text);
+}
+
+.validation-item-fail .validation-item-message {
+  color: #f5a6a1;
+  font-weight: 600;
+}
+
+.validation-item-details {
+  margin: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.validation-item-details .summary-row {
+  font-size: 0.6875rem;
+  gap: 12px;
+}
+
+.validation-item-details dd {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+/* A failed pipeline step. Solid red with a halo — the same *shape* as complete,
+   so the difference is unambiguous even in monochrome, since pending is hollow
+   and active is a ring. */
+.pipeline-step-failed .pipeline-marker {
+  border-color: #e85c54;
+  background: #e85c54;
+  box-shadow: 0 0 0 3px rgba(232, 92, 84, 0.2);
+}
+
+.pipeline-step-failed .pipeline-label {
+  color: #f5a6a1;
+  font-weight: 600;
+}
+
+.pipeline-step-failed .pipeline-detail {
+  color: #e0817b;
+}
+
+/* ── Subphase D: the conflict simulation ────────────────────────────────── */
+
+/* The simulation control, at the right end of the validation bar. Quiet while
+   idle — it is a demonstration aid, not a primary action — and unmistakably
+   "on" while the override is applied, because a presenter must never be unsure
+   whether the model on screen is the real record. */
+.validation-simulate {
+  flex: none;
+  padding: 4px 12px;
+  border: 1px dashed rgba(232, 92, 84, 0.5);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.6875rem;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease, background-color 120ms ease;
+}
+
+.validation-simulate:hover:not(:disabled) {
+  color: #f5a6a1;
+  border-color: rgba(232, 92, 84, 0.8);
+}
+
+/* Applied. Solid border, tinted, and the label has become "Restore valid
+   geometry" — the control names the way out, not the way in. */
+.validation-simulate-active {
+  border-style: solid;
+  border-color: rgba(232, 92, 84, 0.75);
+  background: rgba(232, 92, 84, 0.16);
+  color: #ff8b83;
+  font-weight: 600;
+}
+
+.validation-simulate:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.validation-simulate:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ── The conflict finding, in two places ──────────────────────────────────
+   Subphase F put the whole finding in one 430 px card floating over the middle
+   of the 3D canvas. Everything in it was factual and all of it was in the way:
+   the card covered exactly the region that carried its own evidence — the two
+   red units, the red intersection volume, the colourless ghost and the
+   displacement arrow. The demonstration's strongest picture was behind its own
+   caption.
+
+   Subphase G split it along the line between *that* and *what*:
+
+     .conflict-alert   one line, top-centre over the canvas. THAT there is a
+                       conflict, and how large it is. Occludes almost nothing.
+     .conflict-panel   the full record of the finding, DOCKED at the top of the
+                       right-hand column with the pipeline and the inspector.
+
+   Nothing about the 3D presentation changed. The scene is simply allowed to be
+   the visual focus of conflict mode, which was always the intention. */
+
+/* THE ALERT. A pill rather than a card, and the shape is the argument: a pill
+   cannot grow into a panel, so nobody will later be tempted to add a second
+   line to it. Top-centre, in the generation status strip's position — the two
+   are never on screen at once, since one appears during the transition and the
+   other only once the model has settled.
+
+   `pointer-events: none` so the viewer behind it stays orbitable while a
+   presenter talks over it. */
+.conflict-alert {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: center;
+  gap: 3px 8px;
+  max-width: calc(100% - 32px);
+  padding: 7px 15px;
+  border: 1px solid rgba(232, 92, 84, 0.6);
+  border-radius: 999px;
+  background: rgba(38, 16, 15, 0.92);
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+}
+
+.conflict-alert-glyph {
+  font-size: 0.8125rem;
+  line-height: 1;
+  color: #ff8b83;
+}
+
+.conflict-alert-text {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: #ff8b83;
+}
+
+.conflict-alert-sep {
+  color: rgba(210, 154, 149, 0.7);
+}
+
+/* The one figure that turns an announcement into a measurement. */
+.conflict-alert-volume {
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  white-space: nowrap;
+  color: #ffd0cb;
+}
+
+.conflict-alert-count {
+  font-size: 0.625rem;
+  white-space: nowrap;
+  color: #c08c88;
+}
+
+/* THE PANEL. Docked in the right column, so it is laid out by
+   `.inspector-panel`'s grid rather than positioned: no `position`, no `z-index`,
+   no `transform`, and — unlike the card it replaces — no `pointer-events: none`,
+   because it no longer overlaps anything that needs to receive a drag. Its text
+   can be selected, which matters for a figure someone may want to quote.
+
+   Same shape as `.property-inspector` on purpose: full width, 8 px radius, the
+   column's own padding around it. It is a card in a column of cards. What sets
+   it apart is colour and the 3 px accent rule, which is the same signal the
+   conflicted units carry in the 3D scene. */
+.conflict-panel {
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid rgba(232, 92, 84, 0.6);
+  border-left: 3px solid #e85c54;
+  border-radius: 8px;
+  background: rgba(38, 16, 15, 0.9);
+}
+
+.conflict-panel-title {
+  margin: 0 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #ff8b83;
+}
+
+.conflict-panel-glyph {
+  font-size: 0.9375rem;
+  line-height: 1;
+}
+
+.conflict-panel-fields .summary-row {
+  font-size: 0.75rem;
+  /* Tighter than the old floating card's 16 px: the docked column is 306 px
+     wide rather than 430, so the gutter between label and value gives up what
+     the wrapping values need. */
+  gap: 12px;
+}
+
+.conflict-panel-fields dt {
+  color: #d29a95;
+  white-space: nowrap;
+}
+
+.conflict-panel-fields dd {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  color: var(--text);
+  text-align: right;
+}
+
+/* The identifier under a unit number, and the three extents under the volume —
+   the working, shown so the figure can be checked rather than believed. */
+.conflict-panel-id {
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 0.625rem;
+  font-weight: 400;
+  color: #c08c88;
+  overflow-wrap: anywhere;
+}
+
+.conflict-panel-volume {
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: #ff8b83;
+}
+
+/* Figures that are meant to be read digit by digit — the three extents and the
+   displacement. Monospaced for the same reason the identifiers are: a reader
+   checking 4.00 × 7.00 × 3.00 against 84.0 should not have to fight kerning. */
+.conflict-panel-mono {
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 0.6875rem;
+}
+
+/* The rule and the status are sentences rather than figures, so they wrap. */
+.conflict-panel-fields dd.conflict-panel-rule,
+.conflict-panel-fields dd.conflict-panel-status {
+  align-items: flex-end;
+  font-size: 0.6875rem;
+  line-height: 1.4;
+  white-space: normal;
+}
+
+/* "Requires cadastral review" is the most consequential line in the panel: it
+   is the system declining to decide. Amber rather than red — this is a
+   referral, not a further failure. */
+.conflict-panel-fields dd.conflict-panel-status {
+  color: #f0c070;
+  font-weight: 600;
+}
+
+/* ── The resolution path ──────────────────────────────────────────────────
+   Rendered as a chain of chips with arrows between them. The two steps this
+   prototype actually performs are lit; the three a cadastral officer performs
+   are outlined. That distinction is the point of showing the chain at all, so
+   it is carried by border and colour rather than by a footnote. */
+.conflict-workflow {
+  margin: 11px 0 0;
+  padding: 10px 0 0;
+  border-top: 1px solid rgba(232, 92, 84, 0.28);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 3px;
+  list-style: none;
+}
+
+.conflict-workflow-step {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 7px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font-size: 0.5625rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* The arrow lives on the pseudo-element rather than in the markup, so the list
+   stays a list of steps for a screen reader instead of a list of steps and
+   punctuation. */
+.conflict-workflow-step:not(:last-child)::after {
+  content: '→';
+  margin-left: 5px;
+  color: rgba(210, 154, 149, 0.65);
+  font-size: 0.625rem;
+  font-weight: 400;
+}
+
+/* Performed by this system. */
+.conflict-workflow-auto {
+  border-color: rgba(232, 92, 84, 0.5);
+  background: rgba(232, 92, 84, 0.16);
+  color: #ffb3aa;
+}
+
+/* Performed by a person. Deliberately unfilled — an empty chip reads as a step
+   that has not happened, which is exactly what it is. */
+.conflict-workflow-manual {
+  border-color: rgba(210, 154, 149, 0.3);
+  color: #c08c88;
+}
+
+.conflict-panel-note,
+.conflict-panel-disclaimer,
+.conflict-panel-more {
+  margin: 10px 0 0;
+  padding-top: 9px;
+  border-top: 1px solid rgba(232, 92, 84, 0.28);
+  font-size: 0.625rem;
+  font-style: italic;
+  line-height: 1.45;
+  color: #c08c88;
+}
+
+/* The limit of what the system claims. Not italic and not a footnote: it is a
+   statement of scope, and it is the line most likely to be quoted back by
+   someone who knows what a cadastre is. */
+.conflict-panel-disclaimer {
+  font-style: normal;
+  font-weight: 600;
+  color: #d9c3a2;
+}
+
+/* The dispute badge in the property inspector. It sits above the record and
+   replaces nothing — a contested property still has an identifier, an area and
+   an elevation, and a register that hid them the moment a dispute arose would be
+   useless exactly when it was needed. */
+.inspector-conflict {
+  margin: 0 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 11px;
+  border: 1px solid rgba(232, 92, 84, 0.55);
+  border-left: 3px solid #e85c54;
+  border-radius: 6px;
+  background: rgba(232, 92, 84, 0.14);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #ff8b83;
+}
+
+.inspector-conflict-glyph {
+  font-size: 0.875rem;
+  line-height: 1;
+}
+
+/* ── Subphase E: the ownership hierarchy ────────────────────────────────── */
+
+/* Parcel → Floor → Unit → Identifier, as a descent. The arrows are drawn from
+   the list rather than typed into the markup, so a screen reader hears four
+   labelled values instead of four arrow characters. */
+.hierarchy {
+  margin: 0 0 14px;
+}
+
+.hierarchy-list {
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0;
+}
+
+.hierarchy-rung {
+  position: relative;
+  padding: 4px 0 4px 14px;
+}
+
+/* The connecting rule, drawn down the left of every rung but the last, with the
+   arrowhead as a rotated corner at the foot. One border, no glyphs. */
+.hierarchy-rung::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 14px;
+  bottom: -4px;
+  width: 1px;
+  background: var(--border);
+}
+
+.hierarchy-rung::after {
+  content: '';
+  position: absolute;
+  left: 0.5px;
+  bottom: -4px;
+  width: 6px;
+  height: 6px;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  transform: rotate(45deg) translate(-1px, -1px);
+}
+
+.hierarchy-label {
+  display: block;
+  font-size: 0.5625rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.hierarchy-value {
+  display: block;
+  margin-top: 1px;
+  font-size: 0.8125rem;
+  color: var(--text);
+}
+
+.hierarchy-value-mono {
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+/* The identifier card at the foot of the chain. It keeps the exact appearance
+   the standalone ULPIN block had — it is still the loudest thing in the panel,
+   it simply now sits at the end of the descent that produced it. The margin is
+   reset because the chain above already provides the spacing. */
+.hierarchy-terminus.ulpin-block {
+  margin: 0;
+  margin-left: 14px;
+}
+
+/* The per-unit validation line. Two words, quiet, present only when there is
+   nothing wrong — the default state of a register is that it is consistent, and
+   a panel that celebrated validity would make the unremarkable case the loudest
+   one. Units are never painted green in the 3D scene for the same reason. */
+.inspector-validated {
+  margin: 0 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.6875rem;
+  color: var(--muted);
+}
+
+.inspector-validated-glyph {
+  font-size: 0.75rem;
+  line-height: 1;
+  color: var(--accent);
+}
+
 /* Below roughly a laptop's width the three columns stop being three columns:
    336 + 306 px of panels leaves the 3D viewer too little to be worth orbiting.
    They stack instead, and the page is allowed to scroll — the only place in
@@ -427,6 +1687,11 @@ body {
     min-height: 100%;
   }
 
+  .validation-bar {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
   .viewer {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -438,6 +1703,49 @@ body {
 
   .scene-panel {
     min-height: 60vh;
+  }
+
+  /* Stacked, the viewer is narrower than the sum of the summary panel and the
+     view controls. The controls move under the header rather than overlapping
+     the summary, and the preset labels are allowed to wrap onto two rows. */
+  .view-controls {
+    top: auto;
+    bottom: 74px;
+    right: 12px;
+    justify-items: end;
+  }
+
+  .view-preset-group {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    border-radius: 10px;
+  }
+
+  .generation-status {
+    top: auto;
+    bottom: 132px;
+  }
+
+  /* Stacked, the scene column is narrower and the building summary occupies the
+     top-left corner. The alert is one line, so rather than moving it out of the
+     way it is allowed to sit clear of the summary and wrap onto two rows on a
+     genuinely narrow screen — which the `flex-wrap` on `.conflict-alert` already
+     handles. Only the width bound changes. */
+  .conflict-alert {
+    max-width: calc(100% - 24px);
+  }
+
+  /* The view controls have three rows below 1100 px, so they need more room
+     above the generate bar, and the isolation panel moves out of their way. */
+  .view-controls {
+    bottom: 96px;
+  }
+
+  .isolation-panel {
+    top: auto;
+    bottom: 16px;
+    left: 16px;
+    min-width: 0;
   }
 
   .inspector-panel {

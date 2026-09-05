@@ -1,40 +1,61 @@
 /**
- * The building's dimensions, and everything derived from them.
+ * The building's **vertical** description, and everything derived from it.
  *
  * UNIT CONVENTION FOR THE WHOLE PROJECT: **1 Three.js unit = 1 metre.**
  * Every number in this file is metres. Nothing anywhere in the scene should
  * introduce a second scale — if a value is not in metres, it is a bug.
  *
+ * WHAT PHASE 8 TOOK OUT OF THIS FILE, AND WHY
+ * `width` and `depth` used to live here, and the whole 3D building was
+ * generated from them. They are **gone**. The building's horizontal geometry is
+ * now the footprint polygon in `data/demoParcel.ts`, measured by
+ * `geometry/footprint.ts` — see `BuildingFootprint`. Keeping two scalars here
+ * as well would have meant two independent horizontal descriptions of one
+ * building, which is precisely the duplication Phase 8 exists to remove.
+ *
+ * WHY THE VERTICAL VALUES STAYED
+ * They are a genuinely different kind of fact. `numberOfFloors` and
+ * `floorHeight` are **not measured from the ground** — no survey of the plot
+ * reveals them. They come from the building's design and its approvals: a plan
+ * sanction says five floors at three metres. A cadastral footprint, by
+ * contrast, *is* a survey product. Two kinds of fact, two lifetimes, two
+ * sources — so two modules. The footprint says where the walls stand; this
+ * config says how the volume above that outline is sliced.
+ *
+ * `unitColumns` / `unitRows` stay here for the same reason: how a floor is
+ * partitioned into saleable properties is a decision about the building, not a
+ * measurement of the land.
+ *
  * This module is deliberately free of React and of Three.js. It is plain data
- * plus plain arithmetic, so the numbers can be read, reasoned about and later
- * reused by non-3D code (the ULPIN encoder, the detail panel, the map) without
+ * plus plain arithmetic, so the numbers can be read, reasoned about and reused
+ * by non-3D code (the ULPIN encoder, the detail panel, the map) without
  * dragging the renderer along with them.
  */
 
-/** The description of a building, in metres. The single source of truth. */
+/**
+ * The vertical and subdivision description of a building.
+ *
+ * Deliberately **no horizontal dimensions**. Anything that needs a width, a
+ * depth or an area asks the footprint (`geometry/footprint.ts`); anything that
+ * needs a height or a floor count asks this.
+ */
 export interface BuildingConfig {
-  /** Footprint along the X axis, in metres. */
-  readonly width: number
-  /** Footprint along the Z axis, in metres. */
-  readonly depth: number
   /** How many floors are stacked, counting from the ground floor up. */
   readonly numberOfFloors: number
   /** Floor-to-floor height, in metres. Uniform for every floor. */
   readonly floorHeight: number
   /**
-   * How many property units each floor is cut into along X (the width axis).
+   * How many property units each floor is cut into along X (the east-west axis).
    * Part of the config, not of the geometry code, so the partition can change
    * without touching a renderer.
    */
   readonly unitColumns: number
-  /** How many property units each floor is cut into along Z (the depth axis). */
+  /** How many property units each floor is cut into along Z (the north-south axis). */
   readonly unitRows: number
 }
 
-/** The one building the prototype shows. */
+/** The one building the prototype shows: five floors of 3 m, cut 2 × 2. */
 export const DEFAULT_BUILDING_CONFIG: BuildingConfig = {
-  width: 18,
-  depth: 14,
   numberOfFloors: 5,
   floorHeight: 3,
   // A 2 x 2 grid: four units per floor, twenty in the building.

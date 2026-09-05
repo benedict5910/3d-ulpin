@@ -28,7 +28,10 @@
  *   1. The project's whole-model convention is **1 unit = 1 metre** (see
  *      `scene/buildingConfig.ts`). Authoring in metres means the 2D footprint
  *      and the 3D building are stated in the *same* units, so the building's
- *      18 x 14 m footprint is literally reused rather than re-measured.
+ *      18 x 14 m footprint is literally reused rather than re-measured. As of
+ *      Phase 8 that reuse is the mechanism, not a nicety: `DEMO_BUILDING_
+ *      FOOTPRINT_M` below is the geometry the 3D building is extruded from,
+ *      and lat/lng never enters the 3D pipeline at all.
  *   2. Area is exact. Shoelace over metres gives a true square-metre figure;
  *      shoelace over raw degrees gives a number in degrees-squared that has to
  *      be re-projected, and re-projected badly at any latitude but the equator.
@@ -41,7 +44,11 @@
  * a single line of it.
  */
 
-import { DEFAULT_BUILDING_CONFIG, type BuildingConfig } from '../scene/buildingConfig'
+import {
+  footprintFromEastNorth,
+  getFootprintAreaSqM,
+  type BuildingFootprint,
+} from '../geometry/footprint'
 import {
   DEMO_PARCEL_IDENTITY,
   formatParentParcelId,
@@ -116,29 +123,20 @@ export function localPointToGeoPoint(point: LocalPointM, origin: GeoPoint): GeoP
 /**
  * The area of a closed polygon given in local metres, in square metres.
  *
- * The shoelace formula: sum the cross products of consecutive vertices, halve,
- * take the magnitude. `Math.abs` makes it indifferent to winding order, so a
- * boundary authored clockwise and one authored anticlockwise report the same
- * area rather than the same number with opposite signs.
+ * The shoelace formula, indifferent to winding order, over a ring that is
+ * treated as implicitly closed — which is why no polygon in this file repeats
+ * its opening point.
  *
- * The ring is treated as implicitly closed — the last vertex is joined back to
- * the first — which is why no polygon in this file repeats its opening point.
+ * PHASE 8: THE ARITHMETIC MOVED, THE FUNCTION STAYED.
+ * The implementation now lives in `geometry/footprint.ts` and this is a thin
+ * adapter onto it. Before, the same shoelace was written here in `eastM` /
+ * `northM` and would have had to be written a *second* time in `x` / `z` for
+ * the 3D side — two copies of one formula, which is exactly the kind of
+ * duplication that produces a map and a model quietly disagreeing about an
+ * area. One implementation, two coordinate namings, one answer.
  */
 export function polygonAreaSqM(points: readonly LocalPointM[]): number {
-  if (points.length < 3) {
-    return 0
-  }
-
-  let doubleArea = 0
-
-  for (let index = 0; index < points.length; index++) {
-    const current = points[index]
-    const next = points[(index + 1) % points.length]
-
-    doubleArea += current.eastM * next.northM - next.eastM * current.northM
-  }
-
-  return Math.abs(doubleArea) / 2
+  return getFootprintAreaSqM(footprintFromEastNorth(points))
 }
 
 /**
@@ -147,7 +145,10 @@ export function polygonAreaSqM(points: readonly LocalPointM[]): number {
  * This single position anchors everything else in the file, and it is also the
  * point the 3D scene's origin corresponds to — the building in the 3D viewer is
  * centred on `(0, 0)` in Three.js, and `(0, 0)` here is this latitude and
- * longitude. That correspondence is the seam a later 2D-to-3D phase will use.
+ * longitude. **That correspondence is the seam Phase 8 uses.** The 3D pipeline
+ * consumes the metre ring and never sees a degree; this origin is the one place
+ * the two coordinate systems are tied together, and tying them in exactly one
+ * place is what makes the tie checkable.
  *
  * Invented for the demonstration. It names no real plot.
  */
@@ -170,32 +171,61 @@ export const DEMO_PARCEL_OUTLINE_M: readonly LocalPointM[] = [
 ]
 
 /**
- * The building footprint, derived from the 3D building's own configuration.
+ * **The building footprint. The authoritative horizontal geometry of the whole
+ * project.**
  *
- * This is the point of the whole module. The rectangle drawn on the map is not
- * a hand-typed copy of "18 by 14" — it is computed from
- * `DEFAULT_BUILDING_CONFIG.width` and `.depth`, the same two numbers the 3D
- * floors and units are generated from. Change the building's width in the
- * config and the map's footprint changes with it, because there is only one
- * width in the project.
+ * This is the constant Phase 8 is built around, so it is worth being precise
+ * about what changed. In Phase 7 this ring was a *function of the 3D config* —
+ * `buildFootprintOutlineM(config)` read `config.width` and `config.depth` and
+ * built a rectangle from them. The map was therefore downstream of the 3D
+ * model, and the model was generated from two scalars.
  *
- * The footprint is centred on the parcel origin, matching the 3D scene, where
- * the building straddles the origin from `-width/2` to `+width/2`. Three.js
- * `X` maps to east, and Three.js `Z` maps to **south** — Z grows towards the
- * camera in a default right-handed view, i.e. towards the viewer, which on a
- * north-up map is downwards. Hence `northM = -z`.
+ * The arrow now points the other way:
+ *
+ *     DEMO_BUILDING_FOOTPRINT_M   ← surveyed geometry, authored here
+ *              │
+ *              ├──► buildingFootprintMetric ──► 3D building, floors, units
+ *              └──► buildingFootprint (lat/lng) ──► the Leaflet polygon
+ *
+ * `config.width` and `config.depth` no longer exist to read. The four corners
+ * below are the only horizontal description of this building anywhere in the
+ * codebase, and both views measure *them*.
+ *
+ * WHY THE NUMBERS LOOK LIKE THIS
+ * The ring is centred on the parcel reference point — `(0, 0)` here is the same
+ * physical spot as `(0, 0)` in the 3D scene — so the corners run from −9 to +9
+ * east and −7 to +7 north. That is an 18 m × 14 m plan enclosing 252 m², the
+ * dimensions the demo has had since Phase 3. **They are unchanged on purpose:**
+ * Phase 8 is a change of architecture, not of geometry, and a demo whose
+ * numbers moved would make it impossible to tell the two apart.
+ *
+ * Nothing about the *type* is rectangular. It is a ring, like the parcel
+ * boundary above it, and replacing these four points with an eight-point L
+ * would change the 3D building's plan with no edit to any renderer. What would
+ * still need work is the internal 2 × 2 subdivision — see `scene/unitLayout.ts`,
+ * which documents that limitation where it actually bites.
+ *
+ * Authored in `eastM` / `northM` rather than in Three.js `x` / `z` because this
+ * is the *survey* form: it is what a person can read, check against a plan, and
+ * correct. `footprintFromEastNorth` converts it, once, in one place.
  */
-export function buildFootprintOutlineM(config: BuildingConfig): LocalPointM[] {
-  const halfWidth = config.width / 2
-  const halfDepth = config.depth / 2
+export const DEMO_BUILDING_FOOTPRINT_M: readonly LocalPointM[] = [
+  { eastM: -9, northM: -7 },
+  { eastM: 9, northM: -7 },
+  { eastM: 9, northM: 7 },
+  { eastM: -9, northM: 7 },
+]
 
-  return [
-    { eastM: -halfWidth, northM: -halfDepth },
-    { eastM: halfWidth, northM: -halfDepth },
-    { eastM: halfWidth, northM: halfDepth },
-    { eastM: -halfWidth, northM: halfDepth },
-  ]
-}
+/**
+ * The same footprint in Three.js axes — the form the 3D pipeline consumes.
+ *
+ * East → X, North → Z, per the convention fixed in `geometry/footprint.ts`.
+ * Converted once, at module load, so every consumer shares one array rather
+ * than each performing its own flip.
+ */
+export const DEMO_BUILDING_FOOTPRINT: BuildingFootprint = footprintFromEastNorth(
+  DEMO_BUILDING_FOOTPRINT_M,
+)
 
 /** The wording shown wherever these figures appear. */
 export const DEMO_PARCEL_DATA_NOTE = 'Demo / prototype dataset'
@@ -224,11 +254,35 @@ export interface DemoParcel {
   readonly centre: GeoPoint
   /** The cadastral boundary ring, implicitly closed. */
   readonly boundary: readonly GeoPoint[]
-  /** The building footprint ring, implicitly closed. */
+  /**
+   * **The parcel boundary in local metres — the validation engine's input.**
+   *
+   * The same ring as `boundary`, before projection, on the same axes as
+   * `buildingFootprintMetric`. Added in Subphase C so the topology engine can
+   * ask "is the building inside its parcel" in the one coordinate system both
+   * rings already share, rather than converting degrees back to metres at the
+   * point of use — which would put a second, slightly different projection into
+   * a module whose whole job is to be exact about geometry.
+   */
+  readonly parcelBoundaryMetric: BuildingFootprint
+  /** The parcel ring in survey axes, as authored. Kept for display and review. */
+  readonly parcelOutlineM: readonly LocalPointM[]
+  /** The building footprint ring in geographic coordinates, for the map. */
   readonly buildingFootprint: readonly GeoPoint[]
+  /**
+   * **The building footprint in local metres — the 3D pipeline's input.**
+   *
+   * The same ring as `buildingFootprint`, before projection. This is the field
+   * the 3D viewer reads: `x` / `z` metres, ready to become geometry. The map
+   * reads the projected form above. One ring, two renderings, no second
+   * description of the building.
+   */
+  readonly buildingFootprintMetric: BuildingFootprint
+  /** The footprint ring in survey axes, as authored. Kept for display and review. */
+  readonly buildingFootprintOutlineM: readonly LocalPointM[]
   /** Parcel area in square metres, computed from the boundary. */
   readonly areaSqM: number
-  /** Footprint area in square metres, computed from the footprint. */
+  /** Footprint area in square metres, computed from the footprint polygon. */
   readonly buildingFootprintAreaSqM: number
   /** Always `true`. A type-level reminder that none of this is real. */
   readonly isDemoData: true
@@ -247,10 +301,13 @@ export interface DemoParcel {
  */
 export function buildDemoParcel(
   identity: ParcelIdentity = DEMO_PARCEL_IDENTITY,
-  config: BuildingConfig = DEFAULT_BUILDING_CONFIG,
+  footprintOutlineM: readonly LocalPointM[] = DEMO_BUILDING_FOOTPRINT_M,
   origin: GeoPoint = DEMO_PARCEL_ORIGIN,
 ): DemoParcel {
-  const footprintOutlineM = buildFootprintOutlineM(config)
+  // Converted once. The 3D pipeline and the area figure below both read this
+  // array, so "the map and the model share a footprint" is a fact about object
+  // identity, not a claim about two calculations agreeing.
+  const footprintMetric = footprintFromEastNorth(footprintOutlineM)
 
   return {
     parcelId: formatParentParcelId(identity),
@@ -261,9 +318,15 @@ export function buildDemoParcel(
     longitude: origin[1],
     centre: [origin[0], origin[1]],
     boundary: DEMO_PARCEL_OUTLINE_M.map((point) => localPointToGeoPoint(point, origin)),
+    // Converted by the same function as the footprint, so the two rings the
+    // validator compares are guaranteed to be on the same axes.
+    parcelBoundaryMetric: footprintFromEastNorth(DEMO_PARCEL_OUTLINE_M),
+    parcelOutlineM: DEMO_PARCEL_OUTLINE_M,
     buildingFootprint: footprintOutlineM.map((point) => localPointToGeoPoint(point, origin)),
+    buildingFootprintMetric: footprintMetric,
+    buildingFootprintOutlineM: footprintOutlineM,
     areaSqM: polygonAreaSqM(DEMO_PARCEL_OUTLINE_M),
-    buildingFootprintAreaSqM: polygonAreaSqM(footprintOutlineM),
+    buildingFootprintAreaSqM: getFootprintAreaSqM(footprintMetric),
     isDemoData: true,
     dataNote: DEMO_PARCEL_DATA_NOTE,
   }
@@ -272,8 +335,10 @@ export function buildDemoParcel(
 /**
  * The one parcel the prototype shows — `KA-BLR-0482-001928`.
  *
- * Built once at module load from the shared identity and the shared building
- * config. Parcel area works out at 1 547 m2; the footprint at 252 m2, which is
- * 18 x 14 exactly, because it *is* the 3D building's footprint.
+ * Built once at module load from the shared identity and the authored
+ * footprint. Parcel area works out at 1 547 m2; the footprint at 252 m2, which
+ * is 18 x 14 exactly — and since Phase 8 that is not because it was *derived
+ * from* the 3D building's dimensions, but because it **is** the geometry the
+ * 3D building is generated from.
  */
 export const DEMO_PARCEL: DemoParcel = buildDemoParcel()

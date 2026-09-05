@@ -1,3 +1,4 @@
+import type { FootprintMetrics } from '../geometry/footprint'
 import {
   getTotalHeight,
   getUnitsPerFloor,
@@ -8,27 +9,48 @@ import type { ApartmentUnit } from '../scene/unitLayout'
 /**
  * A small read-out of the building and its property units, overlaid on the viewer.
  *
- * Every value is computed from the same `BuildingConfig` the 3D geometry is
- * generated from, and the per-unit figures are read off the **same generated
- * `ApartmentUnit[]` the scene renders** — nothing here is typed in by hand. If
- * the config says eight floors of six units, the scene shows 48 boxes and this
- * panel says 48 units, with no third place to keep in step.
+ * PHASE 8: WHERE THE FOOTPRINT ROW COMES FROM.
+ * This panel used to print `config.width × config.depth`. Those fields no
+ * longer exist. The footprint line is now read off a `FootprintMetrics` — the
+ * polygon **measured**, by the same function the geometry itself is built
+ * from — so the number in this panel and the shape in the 3D scene cannot
+ * disagree without one of them being broken. The footprint *area* is the
+ * polygon's true area, not `width × depth`, which for the demo rectangle are
+ * the same 252 m² and for any other plan would not be.
  *
- * Phase 5 tightened that from "the same generator" to "the same array": the
- * units are now built once in `App` and passed in, rather than regenerated
- * here. The numbers were never going to disagree, but selection made object
- * identity meaningful, and one array is simpler to reason about than two that
- * happen to match.
+ * The per-unit figures are read off the **same generated `ApartmentUnit[]` the
+ * scene renders** — nothing here is typed in by hand. If the config says eight
+ * floors of six units, the scene shows 48 boxes and this panel says 48 units,
+ * with no third place to keep in step.
+ *
+ * The panel also distinguishes the two Phase 8 states. Before generation the
+ * building block is fully known — it is source data plus config — but there are
+ * no property units yet, and saying "20 units" while none exist would be the
+ * panel claiming the workflow had run.
  */
 
 interface BuildingSummaryProps {
-  /** The building being described. */
+  /** The building's vertical description. */
   config: BuildingConfig
+  /** The footprint, measured once by `App`. */
+  footprintMetrics: FootprintMetrics
   /** The generated units, as rendered by the scene. */
-  units: ApartmentUnit[]
+  units: readonly ApartmentUnit[]
+  /** Whether the 3D cadastre has been generated. */
+  isGenerated: boolean
 }
 
-function BuildingSummary({ config, units }: BuildingSummaryProps) {
+/** One length in metres, at panel precision. */
+function metres(value: number): string {
+  return value.toFixed(1)
+}
+
+function BuildingSummary({
+  config,
+  footprintMetrics,
+  units,
+  isGenerated,
+}: BuildingSummaryProps) {
   const totalHeight = getTotalHeight(config)
   const unitsPerFloor = getUnitsPerFloor(config)
   // Every unit is identical under a uniform grid, so the first one is representative.
@@ -36,7 +58,26 @@ function BuildingSummary({ config, units }: BuildingSummaryProps) {
 
   return (
     <aside className="building-summary" aria-label="Building summary">
-      <h2 className="summary-title">Building</h2>
+      <h2 className="summary-title">Footprint (source)</h2>
+      <dl className="summary-list">
+        <div className="summary-row">
+          <dt>Plan</dt>
+          <dd>
+            {metres(footprintMetrics.widthM)} &times;{' '}
+            {metres(footprintMetrics.depthM)} m
+          </dd>
+        </div>
+        <div className="summary-row">
+          <dt>Area</dt>
+          <dd>{footprintMetrics.areaSqM.toFixed(0)} m&sup2;</dd>
+        </div>
+        <div className="summary-row">
+          <dt>Vertices</dt>
+          <dd>{footprintMetrics.vertexCount}</dd>
+        </div>
+      </dl>
+
+      <h2 className="summary-title summary-title-secondary">Building</h2>
       <dl className="summary-list">
         <div className="summary-row">
           <dt>Floors</dt>
@@ -50,45 +91,52 @@ function BuildingSummary({ config, units }: BuildingSummaryProps) {
           <dt>Total height</dt>
           <dd>{totalHeight.toFixed(1)} m</dd>
         </div>
-        <div className="summary-row">
-          <dt>Footprint</dt>
-          <dd>
-            {config.width} &times; {config.depth} m
-          </dd>
-        </div>
       </dl>
 
       <h2 className="summary-title summary-title-secondary">Property units</h2>
-      <dl className="summary-list">
-        <div className="summary-row">
-          <dt>Vertical units</dt>
-          <dd>{units.length}</dd>
-        </div>
-        <div className="summary-row">
-          <dt>Units per floor</dt>
-          <dd>
-            {unitsPerFloor} ({config.unitColumns} &times; {config.unitRows})
-          </dd>
-        </div>
-        {sampleUnit && (
-          <>
-            <div className="summary-row">
-              <dt>Unit footprint</dt>
-              <dd>
-                {sampleUnit.width} &times; {sampleUnit.depth} m
-              </dd>
-            </div>
-            <div className="summary-row">
-              <dt>Area per unit</dt>
-              <dd>{sampleUnit.areaSqM.toFixed(0)} m&sup2;</dd>
-            </div>
-            <div className="summary-row">
-              <dt>Volume per unit</dt>
-              <dd>{sampleUnit.volumeCubicM.toFixed(0)} m&sup3;</dd>
-            </div>
-          </>
-        )}
-      </dl>
+      {isGenerated && sampleUnit ? (
+        <dl className="summary-list">
+          <div className="summary-row">
+            <dt>Vertical units</dt>
+            <dd>{units.length}</dd>
+          </div>
+          <div className="summary-row">
+            <dt>Units per floor</dt>
+            <dd>
+              {unitsPerFloor} ({config.unitColumns} &times; {config.unitRows})
+            </dd>
+          </div>
+          <div className="summary-row">
+            <dt>Unit footprint</dt>
+            <dd>
+              {metres(sampleUnit.width)} &times; {metres(sampleUnit.depth)} m
+            </dd>
+          </div>
+          <div className="summary-row">
+            <dt>Area per unit</dt>
+            <dd>{sampleUnit.areaSqM.toFixed(0)} m&sup2;</dd>
+          </div>
+          <div className="summary-row">
+            <dt>Volume per unit</dt>
+            <dd>{sampleUnit.volumeCubicM.toFixed(0)} m&sup3;</dd>
+          </div>
+        </dl>
+      ) : (
+        <p className="summary-pending">
+          Not generated. {units.length} units will be cut from this footprint.
+        </p>
+      )}
+
+      {/* The rectangular assumption, stated where the subdivision is described
+          rather than buried in a comment. It is a real limitation of the
+          prototype and the interface says so. */}
+      {isGenerated && (
+        <p className="summary-note" role="note">
+          {footprintMetrics.isAxisAlignedRectangle
+            ? 'Prototype: units are cut on a rectangular grid over the footprint’s bounding box.'
+            : 'Warning: this footprint is not rectangular, so the prototype grid overhangs the plan.'}
+        </p>
+      )}
     </aside>
   )
 }

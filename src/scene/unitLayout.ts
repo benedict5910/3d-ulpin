@@ -18,6 +18,11 @@ import {
   type FloorLayout,
 } from './buildingConfig'
 import {
+  getFootprintBounds,
+  type BuildingFootprint,
+  type FootprintBounds,
+} from '../geometry/footprint'
+import {
   DEMO_PARCEL_IDENTITY,
   formatParentParcelId,
   type ParcelIdentity,
@@ -58,7 +63,8 @@ const DEFAULT_PROPERTY_TYPE: PropertyType = 'Residential'
  * comparison rather than a reconstruction. The size fields below are convenience
  * derivations of those bounds, computed once so no consumer has to subtract.
  *
- * Axes follow Three.js: **X = width, Y = up, Z = depth.**
+ * Axes follow Three.js: **X = width (east), Y = up (elevation), Z = depth
+ * (north)** — the mapping fixed in `geometry/footprint.ts`.
  */
 export interface ApartmentUnit {
   /** Stable unique key for this unit within the building, e.g. `unit-301`. */
@@ -129,9 +135,9 @@ export interface ApartmentUnit {
   readonly yMin: number
   /** Ceiling, metres above ground. Equals the floor's `topY`. */
   readonly yMax: number
-  /** North edge, metres along Z. */
+  /** South edge, metres along Z. (North is +Z — see `geometry/footprint.ts`.) */
   readonly zMin: number
-  /** South edge, metres along Z. */
+  /** North edge, metres along Z. */
   readonly zMax: number
 
   /** `xMax - xMin`, metres. */
@@ -162,16 +168,40 @@ function formatUnitNumber(floorLevel: number, indexOnFloor: number): string {
 /**
  * Cut one floor into a grid of units and return them.
  *
- * The partition is a plain 2D grid over the floor's footprint. The building is
- * centred on the origin, so the footprint runs from `-width / 2` to `+width / 2`
- * along X and from `-depth / 2` to `+depth / 2` along Z, and a cell's bounds are
- * just offsets into that:
+ * PHASE 8: WHERE THE HORIZONTAL NUMBERS COME FROM NOW.
+ * The grid used to be laid out over `config.width` / `config.depth` — two
+ * scalars that the renderer and the map each read separately. It is now laid
+ * out over the **bounding box of the building footprint polygon**, which is
+ * passed in. Nothing in this file knows or states that the demo building is
+ * 18 m by 14 m; it measures whatever polygon it is given:
  *
- *   unitWidth = width  / unitColumns          (18 / 2 = 9 m)
- *   unitDepth = depth  / unitRows             (14 / 2 = 7 m)
+ *   unitWidth = (bounds.xMax - bounds.xMin) / unitColumns     (18 / 2 = 9 m)
+ *   unitDepth = (bounds.zMax - bounds.zMin) / unitRows        (14 / 2 = 7 m)
  *
- *   xMin = -width / 2 + column * unitWidth    xMax = xMin + unitWidth
- *   zMin = -depth / 2 + row    * unitDepth    zMax = zMin + unitDepth
+ *   xMin = bounds.xMin + column * unitWidth   xMax = xMin + unitWidth
+ *   zMin = bounds.zMin + row    * unitDepth   zMax = zMin + unitDepth
+ *
+ * For a footprint centred on the origin, `bounds.xMin` *is* `-width / 2`, so
+ * the demo's twenty units come out at exactly the coordinates Phases 4–7
+ * produced. That is the intended result: the architecture changed, the geometry
+ * did not, and a demo whose numbers shifted would make the two indistinguishable.
+ *
+ * PROTOTYPE LIMITATION — STATED HERE BECAUSE THIS IS WHERE IT BITES.
+ * Using the **bounding box** rather than the polygon is the one place the
+ * rectangular assumption survives Phase 8. For an axis-aligned rectangle the
+ * box and the polygon are the same shape and the subdivision is exact. For an
+ * L-shaped or chamfered plan they are not: the grid would lay units over ground
+ * the building does not occupy, and the corner cells would claim area that does
+ * not exist. Genuine subdivision of an arbitrary polygon needs a partitioning
+ * pass (a trapezoidal or monotone decomposition, then an allocation of the
+ * pieces to properties) and it is deliberately **not** in this phase. What is
+ * here instead is the honesty: `geometry/footprint.ts` can *say* whether a ring
+ * is a rectangle (`isAxisAlignedRectangle`), the app checks it and warns in
+ * development, and the interface labels the subdivision as a prototype
+ * assumption — so it cannot fail silently. The check deliberately lives at the
+ * call site rather than in here, because this module is plain data and
+ * arithmetic that must keep running under bare Node, with no build-time
+ * environment flags in it.
  *
  * The vertical bounds are not computed here at all — they are taken verbatim
  * from the floor the unit sits on, so a unit can never disagree with its floor
@@ -182,11 +212,15 @@ function formatUnitNumber(floorLevel: number, indexOnFloor: number): string {
  */
 function buildUnitsForFloor(
   config: BuildingConfig,
+  bounds: FootprintBounds,
   floor: FloorLayout,
   parcel: ParcelIdentity,
 ): ApartmentUnit[] {
-  const unitWidth = config.width / config.unitColumns
-  const unitDepth = config.depth / config.unitRows
+  const footprintWidth = bounds.xMax - bounds.xMin
+  const footprintDepth = bounds.zMax - bounds.zMin
+
+  const unitWidth = footprintWidth / config.unitColumns
+  const unitDepth = footprintDepth / config.unitRows
   const unitHeight = floor.topY - floor.baseY
   // Identical for every unit in the building, so joined once per floor rather
   // than once per unit.
@@ -198,8 +232,9 @@ function buildUnitsForFloor(
     for (let column = 0; column < config.unitColumns; column++) {
       const indexOnFloor = row * config.unitColumns + column + 1
 
-      const xMin = -config.width / 2 + column * unitWidth
-      const zMin = -config.depth / 2 + row * unitDepth
+      // Offsets into the footprint's own extent — not into a config constant.
+      const xMin = bounds.xMin + column * unitWidth
+      const zMin = bounds.zMin + row * unitDepth
 
       const areaSqM = unitWidth * unitDepth
 
@@ -246,12 +281,30 @@ function buildUnitsForFloor(
 /**
  * Generate every unit in the building, floor by floor.
  *
- *   BuildingConfig ──► FloorLayout[] ──► ApartmentUnit[]
- *    (6 numbers)        vertical slices    the 20 properties
+ * **This function is the 2D-to-3D cadastral transformation.** Read the two
+ * inputs and what they contribute:
+ *
+ *   BuildingFootprint ──► bounding box ──┐
+ *    (surveyed polygon,  horizontal      ├──► ApartmentUnit[]
+ *     in metres)         extent          │     the 20 properties, each a
+ *                                        │     six-bounds volume in metres
+ *   BuildingConfig ──► FloorLayout[] ────┘
+ *    (floors, height,   vertical
+ *     grid)             slices
+ *
+ * The footprint supplies **where**, the config supplies **how high and how many**.
+ * Neither can do the other's job, and neither is derived from the other — which
+ * is exactly why they are two parameters and two modules. A re-survey changes
+ * the first; a revised plan sanction changes the second.
  *
  * Nothing is hand-authored. Twenty units exist because the config says five
- * floors of a 2 x 2 grid; changing `numberOfFloors` to 12 or `unitColumns` to 3
- * changes the building with no edit to this function or to any renderer.
+ * floors of a 2 × 2 grid; changing `numberOfFloors` to 12 or `unitColumns` to 3
+ * changes the building with no edit to this function or to any renderer, and
+ * changing the footprint's corners moves every unit with no edit either.
+ *
+ * `footprint` is required and comes second, deliberately: making it a parameter
+ * with no default forces every call site to say which geometry it means, and
+ * the compiler found every one of them when Phase 8 changed this signature.
  *
  * `floors` is a parameter rather than an internal detail so that a caller which
  * already has the layouts (the summary panel, a future ULPIN encoder) can pass
@@ -266,11 +319,17 @@ function buildUnitsForFloor(
  */
 export function buildApartmentUnits(
   config: BuildingConfig,
+  footprint: BuildingFootprint,
   floors: FloorLayout[] = buildFloorLayouts(config),
   parcel: ParcelIdentity = DEMO_PARCEL_IDENTITY,
 ): ApartmentUnit[] {
+  // Measured once for the whole building rather than once per floor: every
+  // floor of this prototype has the same plan, and measuring per floor would
+  // imply an independence that does not exist.
+  const bounds = getFootprintBounds(footprint)
+
   const units = floors.flatMap((floor) =>
-    buildUnitsForFloor(config, floor, parcel),
+    buildUnitsForFloor(config, bounds, floor, parcel),
   )
 
   // Fail loudly rather than shipping two properties with the same name. This
@@ -314,7 +373,7 @@ export function getUnitCenter(unit: ApartmentUnit): [number, number, number] {
  * makes a stale selection harmless if the config ever changes under it.
  */
 export function findUnitById(
-  units: ApartmentUnit[],
+  units: readonly ApartmentUnit[],
   unitId: string | null,
 ): ApartmentUnit | null {
   if (unitId === null) return null
