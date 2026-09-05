@@ -474,13 +474,16 @@ function SceneViewer({
         isSettled={visuals.isSettled}
         basementLevels={basementLevels}
         basementPlanCentres={basementPlanCentres}
-        // Deliberately `null`, and the one thing on this component that is not
-        // yet wired end to end. The label reads `spaceCode` and `tier` off
-        // `scene/basementLayout`'s `UndergroundUnit`, while `App` still
-        // generates the older `underground/undergroundLayout` record, which has
-        // neither. Passing the level labels but not the selected volume is the
-        // honest partial state: it is a missing label, not a wrong one, and it
-        // disappears the moment the two record types are reconciled.
+        // The decks themselves, for the `B1 · PARKING` captions, and how far
+        // the underground view has arrived, which is what gates them.
+        undergroundSpaces={undergroundSpaces}
+        undergroundAmount={undergroundAmount}
+        // Deliberately `null`. That label reads `spaceCode` and `tier` off
+        // `scene/basementLayout`'s subdivided `UndergroundUnit`, a record type
+        // the live pipeline no longer generates. It is a missing label rather
+        // than a wrong one — and since the redesign the gap it left is covered:
+        // every deck now carries a standing `B1 · PARKING` caption, so a
+        // below-ground selection is never an unnamed box on screen.
         selectedUndergroundUnit={null}
       />
 

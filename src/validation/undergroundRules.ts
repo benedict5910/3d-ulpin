@@ -32,7 +32,13 @@ import {
   OVERLAP_EPSILON_M,
   type Box3D,
 } from './aabb'
-import { isPointInsideOrOnRing, type Point2D, type Ring2D } from './geometry2d'
+import {
+  isPointInsideOrOnRing,
+  isRingInsideRing,
+  isSimpleRing,
+  type Point2D,
+  type Ring2D,
+} from './geometry2d'
 import type { ValidationResult } from './types'
 
 /**
@@ -64,8 +70,26 @@ export interface ValidatableBasementLevel {
 
 /** Everything the underground rules need. All logical geometry; none display. */
 export interface UndergroundInput {
-  /** The building footprint, in metres, Three.js axes. The same ring as above. */
-  readonly footprint: Ring2D
+  /**
+   * **The excavation's own footprint**, in metres, Three.js axes.
+   *
+   * Since the underground redesign this is NOT the building footprint. The
+   * basement is dug wider than the tower — 22 × 18 m against 18 × 14 — so the
+   * containment rule below has to be pointed at the excavation's ring, and the
+   * old rule (deck corners inside the *tower's* plan) would now fail on a
+   * perfectly correct record. What replaces the guarantee that used to come
+   * free from sharing one polygon is `checkBasementPlan`: the excavation ring
+   * is checked against the parcel, so "the basement stays on the plot" is
+   * measured rather than inherited.
+   */
+  readonly basementFootprint: Ring2D
+  /**
+   * The cadastral parcel boundary, in metres, Three.js axes.
+   *
+   * The excavation's parent. Both rings — the tower's and the basement's — are
+   * subdivisions of it, and this is what the basement's is tested against.
+   */
+  readonly parcelBoundary: Ring2D
   /** The underground spaces to validate. */
   readonly spaces: readonly ValidatableUndergroundUnit[]
   /** The basement levels those spaces are supposed to occupy. */
@@ -156,17 +180,77 @@ export function checkBasementLevels(input: UndergroundInput): ValidationResult[]
   ]
 }
 
-/* ── Rule U2: every space lies under the building, horizontally ───────────── */
+/* ── Rule U2a: the excavation's own plan sits on the parcel ───────────────── */
 
 /**
- * Is every underground volume within the building footprint in plan?
+ * Is the **basement footprint** a usable ring, and is it inside the parcel?
  *
- * The identical test the above-ground units get, against the identical ring —
- * which is the point. The excavation is sanctioned under the building's own
- * plan, so a basement that extended past it would be claiming subsurface rights
- * outside the footprint, and that is exactly the kind of encroachment a 3D
- * register exists to catch. Corners *on* the boundary are the normal case: the
- * spaces are cut from that footprint.
+ * WHY THIS RULE HAD TO BE WRITTEN
+ * Before the redesign there was nothing here to check. The basement was cut
+ * from the tower's ring, the tower's ring was already tested against the parcel
+ * by `checkParcelContainment`, and so "the excavation stays on the plot" was
+ * true by construction — a guarantee, not a finding. The excavation now has a
+ * boundary of its own, wider than the tower's and authored separately, and a
+ * separately authored boundary can be authored wrong. So the guarantee is
+ * replaced by a measurement.
+ *
+ * It matters more below ground than above it. A building that oversails its
+ * plot is visible from the street; a car park dug three metres under the
+ * neighbour's garden is visible to nobody, and is precisely the encroachment a
+ * 3D register exists to make findable. This is the rule that finds it.
+ *
+ * Both halves of `isRingInsideRing` are used — every corner inside or on the
+ * boundary, and no edge crossing a parcel edge — because vertices alone would
+ * miss an excavation that bulges out through a notch in a concave plot, and the
+ * demo parcel is deliberately not a rectangle.
+ */
+export function checkBasementPlan(input: UndergroundInput): ValidationResult[] {
+  const simple = isSimpleRing(input.basementFootprint)
+  const containment = isRingInsideRing(input.basementFootprint, input.parcelBoundary)
+  const contained = simple && containment.contained
+
+  return [
+    {
+      id: 'basement-within-parcel',
+      category: 'underground-containment',
+      status: contained ? 'pass' : 'fail',
+      chip: contained ? 'Excavation on plot' : 'Excavation off plot',
+      message: !simple
+        ? 'The excavation boundary self-intersects and cannot be validated'
+        : containment.contained
+          ? 'The excavation footprint lies entirely within the parent parcel'
+          : containment.edgesCross
+            ? 'The excavation footprint crosses the parcel boundary'
+            : `${containment.outsideVertexIndices.length} excavation vertex/vertices fall outside the parcel`,
+      affectedUnitIds: [],
+      details: {
+        'Excavation vertices': input.basementFootprint.length,
+        'Parcel vertices': input.parcelBoundary.length,
+        'Vertices outside': containment.outsideVertexIndices.length,
+        'Edges crossing boundary': containment.edgesCross ? 'yes' : 'no',
+      },
+    },
+  ]
+}
+
+/* ── Rule U2b: every deck lies inside the excavation, horizontally ────────── */
+
+/**
+ * Is every underground volume within the **excavation's** footprint in plan?
+ *
+ * The same test the above-ground units get, against the ring that actually
+ * governs these volumes. Note what changed and what did not: the *test* is
+ * unchanged, the *ring* is now the basement's own. Pointing it at the tower's
+ * footprint — as it was before the redesign — would now report a correct
+ * 22 × 18 m deck as an encroachment, because the deck deliberately oversails
+ * the 18 × 14 m building.
+ *
+ * Corners *on* the boundary are the normal case, and here they are the only
+ * case: each deck **is** the excavation's extent, so all four of its corners
+ * sit exactly on the ring. That makes the rule's boundary tolerance load-bearing
+ * rather than incidental — a strict interiority test would fail every valid
+ * deck in this model, which is exactly the kind of one-character mistake the
+ * self-check exists to catch.
  */
 export function checkUndergroundContainment(
   input: UndergroundInput,
@@ -181,7 +265,11 @@ export function checkUndergroundContainment(
       { x: space.xMin, z: space.zMax },
     ]
 
-    if (!corners.every((corner) => isPointInsideOrOnRing(corner, input.footprint))) {
+    if (
+      !corners.every((corner) =>
+        isPointInsideOrOnRing(corner, input.basementFootprint),
+      )
+    ) {
       outside.push(space)
     }
   }
@@ -194,8 +282,8 @@ export function checkUndergroundContainment(
       chip: outside.length === 0 ? 'Sub-plan valid' : `${outside.length} outside plan`,
       message:
         outside.length === 0
-          ? `All ${input.spaces.length} underground volumes lie within the building footprint in plan`
-          : `${outside.length} underground volume(s) extend beyond the building footprint`,
+          ? `All ${input.spaces.length} underground volumes lie within the excavation footprint in plan`
+          : `${outside.length} underground volume(s) extend beyond the excavation footprint`,
       affectedUnitIds: outside.map((space) => space.id),
       details: {
         'Spaces checked': input.spaces.length,
@@ -462,6 +550,7 @@ export function checkUnderground(input: UndergroundInput): ValidationResult[] {
 
   return [
     ...checkBasementLevels(input),
+    ...checkBasementPlan(input),
     ...checkUndergroundContainment(input),
     ...checkUndergroundInterval(input),
     ...checkUndergroundOverlap(input),

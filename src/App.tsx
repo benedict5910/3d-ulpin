@@ -68,6 +68,7 @@ import {
   getTotalUndergroundSpaces,
   GROUND_DATUM_Y,
 } from './underground/basementConfig'
+import { DEMO_BASEMENT_FOOTPRINT } from './underground/basementFootprint'
 import { buildUndergroundSpaces } from './underground/undergroundLayout'
 import {
   getAboveGroundEmphasis,
@@ -267,13 +268,30 @@ function CadastreWorkspace({ extraction, onNewSource }: CadastreWorkspaceProps) 
 
   /* ── Below the ground datum ───────────────────────────────────────────────
      The same three lines the building above needs — a config, a set of level
-     layouts, and the volumes generated from them — and they read the SAME
-     footprint. That is the cadastral claim: the excavation lies under the
-     building's own plan, so it is cut from the building's own ring rather than
-     from a second polygon that would have to be kept in step by hand. */
+     layouts, and the volumes generated from them — but they read a DIFFERENT
+     footprint, and that is the cadastral claim the redesign makes.
+
+     The excavation is dug wider than the tower, out toward the setback line,
+     because a ramp and two rows of bays do not fit inside a residential core.
+     So it has a boundary of its own — `DEMO_BASEMENT_FOOTPRINT`, 22 x 18 m
+     against the building's 18 x 14 — separately authored and parented to the
+     same parcel:
+
+         Parent parcel  KA-BLR-0482-001928
+         |- Above-ground building footprint   18 x 14 m
+         `- Underground basement footprint    22 x 18 m
+            |- B1 parking deck   -3 -> 0 m
+            `- B2 parking deck   -6 -> -3 m
+
+     What used to be true by construction — the basement is on the plot, the
+     basement does not interpenetrate the tower — is now *checked* instead, by
+     the topology engine below. That is a stronger position, not a weaker one:
+     the validator is doing work it previously could not fail at. */
 
   const basementConfig = DEFAULT_BASEMENT_CONFIG
   const totalDepthM = getTotalDepthM(basementConfig)
+  /** The excavation's own canonical ring. Not derived from the tower's. */
+  const basementFootprint = DEMO_BASEMENT_FOOTPRINT
 
   const basementLevels = useMemo(
     () => buildBasementLevels(basementConfig),
@@ -281,18 +299,24 @@ function CadastreWorkspace({ extraction, onNewSource }: CadastreWorkspaceProps) 
   )
 
   /**
-   * The four underground spaces, generated once from the footprint and the
-   * basement config.
+   * The two parking decks, generated once from the **excavation's** footprint
+   * and the basement config.
    *
    * Generated eagerly beside the twenty units above, and for the same reason:
    * they are pure data, they cost nothing, and building them at page load means
    * the basement is part of *the cadastre that gets generated* rather than a
    * second thing that appears later. Nothing renders them until the workflow
    * says so.
+   *
+   * Note the second argument: `basementFootprint`, not `footprint`. Handing
+   * this the tower's ring is the one mistake that would produce a plausible
+   * model — decks exactly the size of the building — with nothing visibly
+   * wrong, so the excavation ring is named here rather than defaulted inside
+   * the generator.
    */
   const undergroundSpaces = useMemo(
-    () => buildUndergroundSpaces(basementConfig, footprint, basementLevels),
-    [basementConfig, footprint, basementLevels],
+    () => buildUndergroundSpaces(basementConfig, basementFootprint, basementLevels),
+    [basementConfig, basementFootprint, basementLevels],
   )
 
   /**
@@ -767,6 +791,11 @@ function CadastreWorkspace({ extraction, onNewSource }: CadastreWorkspaceProps) 
       // encroachment and has nothing to say about the excavation.
       undergroundUnits: undergroundSpaces,
       basementLevels,
+      // The ring the below-ground containment rule is measured against. Stated
+      // separately from `footprint` because the two are genuinely different
+      // polygons now, and a rule pointed at the wrong one would report a
+      // correct 22 x 18 m deck as an encroachment on an 18 x 14 m plan.
+      basementFootprint,
       groundDatumY: GROUND_DATUM_Y,
       expectedUndergroundSpaces: getTotalUndergroundSpaces(basementConfig),
       // Stated once, by the layer that owns the parcel, so the
@@ -785,6 +814,7 @@ function CadastreWorkspace({ extraction, onNewSource }: CadastreWorkspaceProps) 
     config,
     undergroundSpaces,
     basementLevels,
+    basementFootprint,
     basementConfig,
   ])
 

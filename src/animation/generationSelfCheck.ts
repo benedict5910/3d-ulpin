@@ -59,6 +59,7 @@ import {
   DEFAULT_BASEMENT_CONFIG,
   getTotalDepthM,
 } from '../underground/basementConfig'
+import { DEMO_BASEMENT_FOOTPRINT } from '../underground/basementFootprint'
 import { buildUndergroundSpaces } from '../underground/undergroundLayout'
 import type { CheckResult } from '../ulpin/ulpinSelfCheck'
 import { getGenerationVisuals } from './generationTimeline'
@@ -267,9 +268,12 @@ export function checkGenerationTimeline(): CheckResult[] {
   // subject from whether a timeline is monotonic.
   const units = buildApartmentUnits(config, DEMO_BUILDING_FOOTPRINT)
   const floorThree = units.find((unit) => unit.unitNumber === '301')
+  // The excavation's own ring, as `App` passes it — not the tower's. The
+  // `underground` camera preset frames these volumes' recorded bounds, so
+  // building them from the wrong polygon would quietly check the wrong framing.
   const undergroundSpaces = buildUndergroundSpaces(
     DEFAULT_BASEMENT_CONFIG,
-    DEMO_BUILDING_FOOTPRINT,
+    DEMO_BASEMENT_FOOTPRINT,
   )
 
   const metrics = getFootprintMetrics(DEMO_BUILDING_FOOTPRINT)

@@ -1,4 +1,7 @@
-import type { OwnershipConflict } from '../validation/validateTopology'
+import type {
+  OwnershipConflict,
+  ValidatableUnit,
+} from '../validation/validateTopology'
 
 /**
  * The compact conflict alert, top-centre over the 3D viewer.
@@ -48,7 +51,11 @@ interface ConflictAlertProps {
    * many — the same rule the panel follows, so the two never disagree about how
    * much was found.
    */
-  conflicts: readonly OwnershipConflict[]
+  // Above-ground conflicts specifically: this panel prints a floor and an
+  // identifier, and only an apartment carries those. The engine's own
+  // register-wide sweep produces the narrower `OwnershipConflict` shape, which
+  // this deliberately does not accept.
+  conflicts: readonly OwnershipConflict<ValidatableUnit>[]
 }
 
 function ConflictAlert({ conflicts }: ConflictAlertProps) {

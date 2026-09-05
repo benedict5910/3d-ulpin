@@ -57,7 +57,7 @@ export interface SpaceRecord {
    * component that draws the chain can stay a dumb list renderer.
    */
   readonly chain: readonly HierarchyRung[]
-  /** `Residential`, `Parking`, `Storage`, `Utility`, … — whatever the record says. */
+  /** `Residential`, `Parking Deck`, … — whatever the record calls its use. */
   readonly propertyType: string
   /** Floor area, square metres. */
   readonly areaSqM: number
@@ -118,19 +118,24 @@ export function toSpaceRecord(unit: ApartmentUnit): SpaceRecord {
  *
  * The chain reads
  *
- *   Parent parcel → Basement 1 → Parking · B1-02 → prototype 3D ULPIN
+ *   Parent parcel → Basement 1 → Parking Deck · B1 → prototype 3D ULPIN
  *
- * which is the descent the phase asked for, and it is the *same shape* as the
- * above-ground one: three narrowing rungs and an identifier at the foot. The
- * middle rung's label changes from `Floor` to `Level` and the last from `Unit`
- * to `Space`, because those are what the register calls them below the datum —
- * but the structure of the claim, and the component that draws it, do not
- * change at all.
+ * which is the same descent as before the underground redesign, and the *same
+ * shape* as the above-ground one: three narrowing rungs and an identifier at
+ * the foot. The middle rung's label is `Level` rather than `Floor` and the last
+ * `Space` rather than `Unit`, because those are what the register calls them
+ * below the datum — but the structure of the claim, and the component that
+ * draws it, do not change at all.
  *
  * The use is carried in the third rung alongside the number rather than being
- * left to the property-type row further down, because "Parking" is the thing a
- * person actually identifies the space by, and a chain ending in a bare `B1-02`
- * would name the volume without saying what it is.
+ * left to the property-type row further down, because "Parking Deck" is the
+ * thing a person actually identifies the space by, and a chain ending in a bare
+ * `B1` would name the volume without saying what it is.
+ *
+ * `useLabel`, not `propertyType`, in both places: `Parking` is the cadastral
+ * use the model records and `Parking Deck` is what a reader calls the thing.
+ * The distinction is kept in the record (see `underground/undergroundLayout.ts`)
+ * so the panel does not have to invent the prose.
  */
 export function undergroundToSpaceRecord(space: UndergroundSpace): SpaceRecord {
   return {
@@ -139,9 +144,9 @@ export function undergroundToSpaceRecord(space: UndergroundSpace): SpaceRecord {
     chain: [
       { label: 'Parent parcel', value: space.parentParcelId, mono: true },
       { label: 'Level', value: space.levelLabel },
-      { label: 'Space', value: `${space.propertyType} · ${space.unitNumber}` },
+      { label: 'Space', value: `${space.useLabel} · ${space.unitNumber}` },
     ],
-    propertyType: space.propertyType,
+    propertyType: space.useLabel,
     areaSqM: space.areaSqM,
     volumeCubicM: space.volumeCubicM,
     xMin: space.xMin,

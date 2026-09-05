@@ -16,6 +16,10 @@ import {
   getUndergroundUnitCentre,
   type UndergroundUnit,
 } from './basementLayout'
+import {
+  getUndergroundSpaceCenter,
+  type UndergroundSpace,
+} from '../underground/undergroundLayout'
 
 /**
  * 3D labels — deliberately, restrictively few.
@@ -65,6 +69,18 @@ const UNIT_LABEL_LIFT_M = 1.1
 
 /** Below this the floors are essentially stacked and the labels stay away. */
 const EXPLODED_LABEL_THRESHOLD = 0.08
+
+/**
+ * Below this the underground view has barely begun and the deck captions wait.
+ *
+ * The same idea as `EXPLODED_LABEL_THRESHOLD` and the same reason: a label
+ * should arrive with the state that makes it necessary, not pop in the instant
+ * a transition starts.
+ */
+const UNDERGROUND_LABEL_THRESHOLD = 0.08
+
+/** How far above a deck's ceiling its caption floats, in metres. */
+const DECK_LABEL_LIFT_M = 0.9
 
 /** Fallback plan centre. See the equivalent note in `Building.tsx`. */
 const ORIGIN: PlanPoint = { x: 0, z: 0 }
@@ -125,6 +141,30 @@ interface SceneLabelsProps {
   selectedUndergroundUnit: UndergroundUnit | null
   /** Plan centre of each basement level, keyed by 1-based level. */
   basementPlanCentres: ReadonlyMap<number, PlanPoint>
+
+  /**
+   * The generated underground decks, for the `B1 · PARKING` captions.
+   *
+   * WHY THESE ARE LABELLED WHEN NOTHING ELSE UNSELECTED IS
+   * The rule this file enforces is that a label appears only where it answers a
+   * question the viewer is already asking. Underground, that question is asked
+   * the moment the view goes below the datum: two identical grey slabs, one
+   * above the other, with nothing on screen to say which is B1, which is B2, or
+   * that either of them is parking. Above ground the geometry answers for
+   * itself — a tower's floors are obviously in order. Below it, it does not.
+   *
+   * So the captions appear with the underground view (or with the explosion,
+   * which separates the decks for the same reason) and are absent from the
+   * ordinary above-ground view, where the volumes they name are buried and the
+   * text would be floating over nothing.
+   *
+   * The caption text is `space.deckLabel` — a field of the record, composed at
+   * the model layer. This component does not assemble it. See
+   * `underground/undergroundLayout.ts`.
+   */
+  undergroundSpaces: readonly UndergroundSpace[]
+  /** How far the underground transition has arrived, `0`–`1`. Gates the captions. */
+  undergroundAmount: number
 }
 
 function SceneLabels({
@@ -138,12 +178,19 @@ function SceneLabels({
   basementLevels,
   selectedUndergroundUnit,
   basementPlanCentres,
+  undergroundSpaces,
+  undergroundAmount,
 }: SceneLabelsProps) {
   // Labels on a building that is still assembling itself would name things
   // before they exist. They wait.
   if (!isSettled) return null
 
   const explodedEnough = explodeAmounts.floors > EXPLODED_LABEL_THRESHOLD
+  // Either state makes the decks worth naming: the underground view brings them
+  // into the frame, the explosion pulls them apart. One opacity for both, so the
+  // captions never flicker when a presenter uses the two together.
+  const deckVisibility = Math.max(undergroundAmount, explodeAmounts.floors)
+  const decksLabelled = deckVisibility > UNDERGROUND_LABEL_THRESHOLD
   // Exploded: label every floor, because the strata are separated and
   // unlabelled. Isolated: label only the isolated one, because the rest are
   // context. Both: the explosion's rule wins, since every floor is legible.
@@ -236,6 +283,41 @@ function SceneLabels({
             </span>
           </Html>
         ))}
+
+      {/* The deck captions: `B1 · PARKING`, `B2 · PARKING`, each floating just
+          above its own ceiling and riding the same display offset as the mesh
+          it names, so an exploded deck takes its caption down with it. */}
+      {decksLabelled &&
+        undergroundSpaces.map((space) => {
+          const [centreX, , centreZ] = getUndergroundSpaceCenter(space)
+          const offset = getUndergroundDisplayOffsetM(
+            space,
+            basementPlanCentres.get(space.basementLevel) ?? ORIGIN,
+            explodeAmounts,
+          )
+
+          return (
+            <Html
+              key={space.id}
+              position={[
+                centreX + offset[0],
+                space.yMax - DECK_LABEL_LIFT_M + offset[1],
+                centreZ + offset[2],
+              ]}
+              center
+              distanceFactor={LABEL_DISTANCE_FACTOR}
+              zIndexRange={[8, 0]}
+              style={{ pointerEvents: 'none' }}
+            >
+              <span
+                className="scene-label scene-label-basement"
+                style={{ opacity: Math.min(1, deckVisibility * 1.6) }}
+              >
+                {space.deckLabel}
+              </span>
+            </Html>
+          )
+        })}
 
       {selectedUnit && (
         <Html

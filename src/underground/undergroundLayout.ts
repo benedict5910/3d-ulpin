@@ -1,24 +1,47 @@
 /**
- * The underground-space model: how one basement level becomes four independent
- * 3D properties below the ground datum.
+ * The underground-space model: how each basement level becomes **one** large
+ * cadastral property below the ground datum.
  *
  * UNIT CONVENTION: **1 Three.js unit = 1 metre**, as everywhere else. Every
  * length is metres, every area square metres, every volume cubic metres.
  *
- * This is the below-ground counterpart of `scene/unitLayout.ts` and it is built
- * the same way, from the same inputs, on purpose:
+ * WHAT THIS MODULE PRODUCES NOW, AND WHAT IT USED TO
+ * It used to cut one 3 m level into a 2 × 2 grid of four small volumes typed
+ * Parking, Parking, Storage and Utility, over the **tower's** footprint. It now
+ * produces **two parking decks, one per level, each a single undivided
+ * cadastral space over the excavation's own, wider footprint**:
  *
- *   BuildingFootprint ──► bounding box ──┐
- *    (the SAME surveyed polygon the      ├──► UndergroundSpace[]
- *     floors above are cut from)         │
- *   BasementConfig ──► level layouts ────┘
+ *   B1   −3.0 m → 0.0 m    22 × 18 m   Parking   KA-…-B01-PARK
+ *   B2   −6.0 m → −3.0 m   22 × 18 m   Parking   KA-…-B02-PARK
  *
- * **The horizontal source is the building footprint, not a second polygon.**
- * That is the cadastral claim the prototype is making: the excavation lies
- * under the building's own plan, so its plan *is* the building's plan, and the
- * two cannot drift because there is only one ring. The only thing that differs
- * between a unit and an underground space is the vertical interval it occupies
- * and the use it is put to.
+ * Both changes are cadastral rather than cosmetic, and they are the point of
+ * the redesign:
+ *
+ *   **One space per level.** A parking deck is one floor plate held as one
+ *   subsurface property; bays inside it are allotted by an instrument the land
+ *   register does not hold. Four quarter-boxes invented four ownership
+ *   boundaries that do not exist. See `basementConfig.ts`.
+ *
+ *   **Its own plan.** The deck is dug wider than the tower — out toward the
+ *   setback line, because a ramp and two rows of bays do not fit inside a
+ *   residential core. A subsurface property *larger in plan* than the surface
+ *   property above it is the case a 2D cadastre cannot express at all, and it
+ *   is now the case this model shows.
+ *
+ *   BasementFootprint ──► bounding box ──┐
+ *    (the excavation's OWN surveyed ring, ├──► UndergroundSpace[]
+ *     parented to the same parcel)        │     one deck per level
+ *   BasementConfig ──► level layouts ─────┘
+ *
+ * **The horizontal source is the excavation's footprint, not the building's.**
+ * That is the claim the prototype now makes, and the reason `footprint` is a
+ * required parameter with no default: every call site has to say which ring it
+ * means, and getting it wrong is a visible decision rather than an inherited
+ * assumption. The relationships that used to hold *by construction* — inside
+ * the parcel, no positive overlap with the tower's volumes — are now **checked**
+ * by `validation/undergroundRules.ts` rather than guaranteed by sharing one
+ * polygon. That is a strictly stronger position: the validator is doing work it
+ * previously could not fail at.
  *
  * WHY A SEPARATE TYPE FROM `ApartmentUnit`
  * An `ApartmentUnit` carries a `floorLevel` that a great deal of code reads as
@@ -48,8 +71,8 @@ import {
 } from '../ulpin/parcelIdentity'
 import {
   assertUniqueIdentifiers,
-  generateUndergroundPrototype3DULPIN,
-  UNIT_PREFIX,
+  generateUndergroundDeckPrototype3DULPIN,
+  PARKING_DECK_CODE,
 } from '../ulpin/generateUlpin'
 import {
   buildBasementLevels,
@@ -60,40 +83,40 @@ import {
 /**
  * What an underground space is used for, in cadastral terms.
  *
- * A union rather than a bare `string`, for the same reason `PropertyType` is:
- * the day a basement holds a substation or a shared cycle store, the compiler
- * points at every place that has to cope. Deliberately *not* merged with the
- * above-ground `PropertyType` union — `Residential` is not a thing a basement
- * level of this building contains, and a single union would let the two be
- * confused at a call site where only one is meaningful.
+ * A one-member union today: **every space below this datum is a parking deck.**
+ * It stays a union rather than collapsing to a bare string because the day the
+ * model records a substation or a shared cycle store, the compiler points at
+ * every place that has to cope — which is the whole value the `Storage` and
+ * `Utility` members carried, even though the shape they described (a quarter of
+ * one level, typed by its position in a grid) was not worth keeping.
+ *
+ * Deliberately *not* merged with the above-ground `PropertyType` union.
+ * `Residential` is not a thing a basement level of this building contains, and
+ * a single union would let the two be confused at a call site where only one is
+ * meaningful.
  */
-export type UndergroundSpaceType = 'Parking' | 'Storage' | 'Utility'
+export type UndergroundSpaceType = 'Parking'
 
 /**
- * The use assigned to each space on a level, **by its index on that level**.
+ * The use of every space on a basement level.
  *
- * Two parking bays, a store and a plant room: the ordinary composition of a
- * small residential basement, and four spaces of three different types rather
- * than four identical ones, so the interface has something real to distinguish.
- *
- * It lives here, next to the generator, rather than in a panel — the panel must
- * *read* a space's type, never decide it. Indexed rather than hard-assigned per
- * space so a config with a different grid still resolves: the lookup wraps.
+ * A constant, not a lookup by index. The old `UNDERGROUND_SPACE_TYPES` array
+ * assigned a use *by position in a grid* — the third box was a store because it
+ * was third — which made the use an accident of iteration order. There is no
+ * grid and no position to read from now: a level is a parking deck, and this is
+ * the one place that says so.
  */
-export const UNDERGROUND_SPACE_TYPES: readonly UndergroundSpaceType[] = [
-  'Parking',
-  'Parking',
-  'Storage',
-  'Utility',
-]
+export const BASEMENT_LEVEL_USE: UndergroundSpaceType = 'Parking'
 
-/** The use for the `n`th space on a level, 1-based. Wraps for larger grids. */
-export function getUndergroundSpaceType(
-  indexOnLevel: number,
-): UndergroundSpaceType {
-  const position = (indexOnLevel - 1) % UNDERGROUND_SPACE_TYPES.length
-  return UNDERGROUND_SPACE_TYPES[position]
-}
+/**
+ * The human-facing name of that use, for panels and the inspector.
+ *
+ * `Parking` is the cadastral *use*; `Parking Deck` is what a person reading the
+ * record calls the thing. Kept beside the use rather than typed into a panel,
+ * so the inspector and the scene cannot come to describe one volume with two
+ * different words.
+ */
+export const PARKING_DECK_LABEL = 'Parking Deck'
 
 /**
  * One underground property space — an axis-aligned box in metres, below y = 0.
@@ -108,16 +131,16 @@ export function getUndergroundSpaceType(
  * (north)**, the mapping fixed in `geometry/footprint.ts`.
  */
 export interface UndergroundSpace {
-  /** Stable unique key within the model, e.g. `underground-B01-U02`. */
+  /** Stable unique key within the model, e.g. `underground-B01`. */
   readonly id: string
   /** 1-based basement level. The first level below the datum is 1. */
   readonly basementLevel: number
+  /** 0-based index of that level in the downward stack. B1 is `0`. */
+  readonly levelIndex: number
   /** Display name of that level, e.g. `Basement 1`. Carried, not re-derived. */
   readonly levelLabel: string
-  /** 1-based position of the space **within its own level**: 1..spacesPerLevel. */
-  readonly indexOnLevel: number
   /**
-   * Human-facing space number, e.g. `B1-02`.
+   * Human-facing space number, e.g. `B1`.
    *
    * A display label only — never parsed, and never a source for the identifier,
    * exactly like `ApartmentUnit.unitNumber`.
@@ -126,26 +149,29 @@ export interface UndergroundSpace {
    * the validation engine's `ValidatableUndergroundUnit` contract without an
    * adapter: the register-wide rules then read one field name on both sides of
    * the datum, and a below-ground volume is handed to them beside a flat.
+   *
+   * It no longer carries a per-level ordinal (`B1-02`), because there is no
+   * longer more than one space on a level to tell apart.
    */
   readonly unitNumber: string
-  /** Cadastral use of the space: parking, storage or utility. */
+  /** Cadastral use of the space. `Parking` for every deck in this model. */
   readonly propertyType: UndergroundSpaceType
+  /** What a person calls it: `Parking Deck`. Display only. */
+  readonly useLabel: string
+  /** The scene's short caption for this deck, e.g. `B1 · PARKING`. */
+  readonly deckLabel: string
 
   /** The parcel identifier shared with every unit in the building above. */
   readonly parentParcelId: string
   /**
-   * The space's **prototype** 3D ULPIN, e.g. `KA-BLR-0482-001928-B01-U02`.
+   * The space's **prototype** 3D ULPIN, e.g. `KA-BLR-0482-001928-B01-PARK`.
    *
    * Generated here, at the model layer, at the same moment as the geometry, so
    * the identifier and the volume it names come from one pass over one set of
-   * inputs. PROTOTYPE ONLY — an encoding invented for this demonstration.
+   * inputs. PROTOTYPE ONLY — an encoding invented for this demonstration, and
+   * never the official Government of India ULPIN format.
    */
   readonly prototypeUlpin: string
-
-  /** 0-based grid column along X. */
-  readonly column: number
-  /** 0-based grid row along Z. */
-  readonly row: number
 
   /** West edge, metres along X. */
   readonly xMin: number
@@ -183,129 +209,116 @@ export interface UndergroundSpace {
   readonly isUnderground: true
 }
 
-/** Format a space number from a level and a position on that level: `B1-02`. */
-function formatSpaceNumber(basementLevel: number, indexOnLevel: number): string {
-  return `B${basementLevel}-${String(indexOnLevel).padStart(2, '0')}`
+/** The display number for a deck: `B1`, `B2`. One place, so the panels agree. */
+export function formatDeckNumber(basementLevel: number): string {
+  return `B${basementLevel}`
 }
 
 /**
- * Cut one basement level into a grid of underground spaces.
+ * The scene caption for a deck: `B1 · PARKING`.
  *
- * The horizontal arithmetic is deliberately **identical** to
- * `buildUnitsForFloor`, over the same bounding box:
+ * Composed here, next to the record, rather than inside `SceneLabels`, so the
+ * text floating in the 3D view is a **field of the record it names**. A label
+ * the renderer assembled would be a second description of the same volume, free
+ * to drift the moment the use changed.
+ */
+export function formatDeckLabel(
+  basementLevel: number,
+  use: UndergroundSpaceType,
+): string {
+  return `${formatDeckNumber(basementLevel)} · ${use.toUpperCase()}`
+}
+
+/**
+ * Cut one basement level into a single parking deck spanning the excavation.
  *
- *   spaceWidth = (bounds.xMax - bounds.xMin) / spaceColumns     (18 / 2 = 9 m)
- *   spaceDepth = (bounds.zMax - bounds.zMin) / spaceRows        (14 / 2 = 7 m)
+ * The horizontal arithmetic is now trivial, and that is exactly the change:
  *
- * so an underground space sits exactly beneath the unit above it, sharing its
- * plan and meeting it at the datum. That vertical alignment is not decorative:
- * it is what makes "touching at y = 0 is valid, positive overlap is not" a
- * claim the demo actually exercises rather than one it asserts about volumes
- * that never come near each other.
+ *   xMin = bounds.xMin,  xMax = bounds.xMax     (−11 → +11, 22 m)
+ *   zMin = bounds.zMin,  zMax = bounds.zMax     (−9  → +9,  18 m)
  *
- * The same prototype limitation applies as above ground and for the same
- * reason: the grid is laid over the footprint's **bounding box**, so an
- * irregular plan would put spaces under ground the building does not occupy.
- * The app warns about it once, at the call site, for both directions at once.
+ * The deck **is** the excavation's extent — one space, the full plan, 396 m².
+ * No division, no grid indices, no per-position use lookup.
  *
  * The vertical bounds are taken verbatim from the level, never recomputed, so a
- * space cannot disagree with its level about which slice of the excavation it
- * occupies.
+ * deck cannot disagree with its level about which slice of the excavation it
+ * occupies. That is the invariant the validator's interval rule asserts is
+ * still true, and it is the check that fires first if a later phase ever lets
+ * an elevation be edited independently of its level.
  *
- * Spaces are walked row-major (Z outer, X inner), matching the unit ordering.
+ * The prototype limitation that remains: the deck is laid over the footprint's
+ * **bounding box** — exact for the authored rectangle, approximate for an
+ * L-shaped excavation. `BuildingSummary` states it where the figures are shown.
  */
-function buildSpacesForLevel(
-  config: BasementConfig,
+function buildDeckForLevel(
   bounds: FootprintBounds,
   level: BasementLevelLayout,
   parcel: ParcelIdentity,
-): UndergroundSpace[] {
-  const footprintWidth = bounds.xMax - bounds.xMin
-  const footprintDepth = bounds.zMax - bounds.zMin
+): UndergroundSpace {
+  const width = bounds.xMax - bounds.xMin
+  const depth = bounds.zMax - bounds.zMin
+  // Positive by construction: `topY` is above `baseY` even though both are at
+  // or below zero. A height is a length; only the elevations are negative.
+  const height = level.topY - level.baseY
 
-  const spaceWidth = footprintWidth / config.spaceColumns
-  const spaceDepth = footprintDepth / config.spaceRows
-  const spaceHeight = level.topY - level.baseY
-  const parentParcelId = formatParentParcelId(parcel)
+  const areaSqM = width * depth
+  const use = BASEMENT_LEVEL_USE
 
-  const spaces: UndergroundSpace[] = []
+  return {
+    // The identifier's own level segment, reused as the key: one naming
+    // decision, so a deck's DOM-facing id and its cadastral id cannot come to
+    // disagree about which space they name.
+    id: `underground-B${String(level.level).padStart(2, '0')}`,
+    basementLevel: level.level,
+    levelIndex: level.index,
+    levelLabel: level.label,
+    unitNumber: formatDeckNumber(level.level),
+    propertyType: use,
+    useLabel: PARKING_DECK_LABEL,
+    deckLabel: formatDeckLabel(level.level, use),
 
-  for (let row = 0; row < config.spaceRows; row++) {
-    for (let column = 0; column < config.spaceColumns; column++) {
-      const indexOnLevel = row * config.spaceColumns + column + 1
+    parentParcelId: formatParentParcelId(parcel),
+    // `PARK` rather than the old `U02` / `S01` scheme: with one space per level
+    // there is no ordinal left to count, and a segment naming the *use* is what
+    // remains worth encoding. See `ulpin/generateUlpin.ts`.
+    prototypeUlpin: generateUndergroundDeckPrototype3DULPIN(
+      parcel,
+      level.level,
+      PARKING_DECK_CODE,
+    ),
 
-      const xMin = bounds.xMin + column * spaceWidth
-      const zMin = bounds.zMin + row * spaceDepth
-      const areaSqM = spaceWidth * spaceDepth
+    xMin: bounds.xMin,
+    xMax: bounds.xMax,
+    // Inherited, not recomputed: the deck spans exactly its level.
+    yMin: level.baseY,
+    yMax: level.topY,
+    zMin: bounds.zMin,
+    zMax: bounds.zMax,
 
-      // `UNIT_PREFIX` and the space's position on its level — deliberately the
-      // same two segments this generator has always produced, so every
-      // identifier it emits is byte-for-byte what it was: `…-B01-U02`.
-      //
-      // The generator now takes the segment's letter as a parameter because the
-      // basement layout counts within a *use* (`P02` is the second parking
-      // bay). This one does not: it numbers spaces across the level, and `U`
-      // here is the unit-index prefix it has always been, not the utility use
-      // code. Passing it explicitly is what keeps the two schemes from being
-      // silently merged by a shared default.
-      const prototypeUlpin = generateUndergroundPrototype3DULPIN(
-        parcel,
-        level.level,
-        UNIT_PREFIX,
-        indexOnLevel,
-      )
+    width,
+    depth,
+    height,
 
-      spaces.push({
-        // The identifier's own level and index segments, reused as the key:
-        // one naming decision, so a space's DOM-facing id and its cadastral id
-        // cannot come to disagree about which space they name.
-        id: `underground-B${String(level.level).padStart(2, '0')}-U${String(indexOnLevel).padStart(2, '0')}`,
-        basementLevel: level.level,
-        levelLabel: level.label,
-        indexOnLevel,
-        unitNumber: formatSpaceNumber(level.level, indexOnLevel),
-        propertyType: getUndergroundSpaceType(indexOnLevel),
+    areaSqM,
+    volumeCubicM: areaSqM * height,
 
-        parentParcelId,
-        prototypeUlpin,
-
-        column,
-        row,
-
-        xMin,
-        xMax: xMin + spaceWidth,
-        // Inherited, not recomputed: the space spans exactly its level.
-        yMin: level.baseY,
-        yMax: level.topY,
-        zMin,
-        zMax: zMin + spaceDepth,
-
-        width: spaceWidth,
-        depth: spaceDepth,
-        height: spaceHeight,
-
-        areaSqM,
-        volumeCubicM: areaSqM * spaceHeight,
-
-        isUnderground: true,
-      })
-    }
+    isUnderground: true,
   }
-
-  return spaces
 }
 
 /**
- * Generate every underground space, level by level.
+ * Generate every underground space, one per level.
  *
- * Nothing is hand-authored. Four spaces exist because the config says one level
- * of a 2 × 2 grid; changing `numberOfLevels` to 2 or `spaceColumns` to 3
- * changes the excavation with no edit to this function or to any renderer, and
- * changing the footprint's corners moves every space with no edit either.
+ * Nothing is hand-authored. Two decks exist because the config says two levels;
+ * changing `numberOfLevels` to 3 adds a third at −9 → −6 with no edit to this
+ * function or to any renderer, and changing the excavation ring's corners moves
+ * both decks with no edit either.
  *
- * `footprint` is required and has no default, deliberately: every call site has
- * to say which geometry it means, and it must be the *same* footprint the
- * building above was cut from.
+ * `footprint` is **the excavation's ring**, required and with no default: every
+ * call site has to say which geometry it means, and since the redesign that is
+ * no longer the same ring the building above is cut from. Passing the tower's
+ * footprint here would produce a technically valid but wrong record — decks the
+ * size of the building — which is precisely why it is not defaulted.
  *
  * Uniqueness is asserted here, over the underground identifiers alone. The
  * cross-set guarantee — that no underground identifier equals an above-ground
@@ -320,13 +333,10 @@ export function buildUndergroundSpaces(
   levels: BasementLevelLayout[] = buildBasementLevels(config),
   parcel: ParcelIdentity = DEMO_PARCEL_IDENTITY,
 ): UndergroundSpace[] {
-  // The building's own footprint, measured once — the same measurement the
-  // above-ground generator makes, of the same ring.
+  // The excavation's own footprint, measured once for the whole stack.
   const bounds = getFootprintBounds(footprint)
 
-  const spaces = levels.flatMap((level) =>
-    buildSpacesForLevel(config, bounds, level, parcel),
-  )
+  const spaces = levels.map((level) => buildDeckForLevel(bounds, level, parcel))
 
   assertUniqueIdentifiers(spaces.map((space) => space.prototypeUlpin))
 

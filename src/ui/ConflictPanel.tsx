@@ -6,7 +6,10 @@ import {
   type ConflictFocus,
 } from '../simulation/conflictPresentation'
 import type { ConflictScenario } from '../simulation/conflictSimulation'
-import type { OwnershipConflict } from '../validation/validateTopology'
+import type {
+  OwnershipConflict,
+  ValidatableUnit,
+} from '../validation/validateTopology'
 
 /**
  * The spatial ownership conflict panel — docked in the right-hand column.
@@ -103,7 +106,11 @@ interface ConflictPanelProps {
    * renders the first and says how many others there are, rather than growing an
    * unbounded list in a column that also has to hold the pipeline and the record.
    */
-  conflicts: readonly OwnershipConflict[]
+  // Above-ground conflicts specifically: this panel prints a floor and an
+  // identifier, and only an apartment carries those. The engine's own
+  // register-wide sweep produces the narrower `OwnershipConflict` shape, which
+  // this deliberately does not accept.
+  conflicts: readonly OwnershipConflict<ValidatableUnit>[]
   /**
    * The staged scenario, when the conflict came from the simulation rather than
    * from the data.

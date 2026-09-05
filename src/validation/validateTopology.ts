@@ -117,6 +117,17 @@ export interface TopologyInput {
   /** The basement levels those volumes are supposed to occupy. */
   readonly basementLevels?: readonly ValidatableBasementLevel[]
   /**
+   * **The excavation's own footprint**, in metres, Three.js axes.
+   *
+   * Since the underground redesign the basement is dug wider than the tower, so
+   * it has a ring of its own and the below-ground containment rule is pointed
+   * at that ring rather than at `footprint`. Optional, and it falls back to
+   * `footprint` when a caller does not state one — which is the correct
+   * behaviour for a model whose excavation genuinely does share the building's
+   * plan, and which keeps every basement-free fixture compiling unchanged.
+   */
+  readonly basementFootprint?: Ring2D
+  /**
    * The elevation treated as ground. Defaults to `0`.
    *
    * A parameter rather than a hard-coded zero so the rule is stated once, by
@@ -497,10 +508,37 @@ function checkParcelConsistency(input: TopologyInput): ValidationResult[] {
 
 /* ── Rule 5: no two properties occupy the same volume ────────────────────── */
 
-/** One discovered 3D ownership conflict. */
-export interface OwnershipConflict {
-  readonly unitA: ValidatableUnit
-  readonly unitB: ValidatableUnit
+/**
+ * The minimum a volume must expose to take part in the overlap sweep.
+ *
+ * Narrower than `ValidatableUnit` on purpose: the sweep needs six bounds, an id
+ * and a number to print, and nothing else. Widening it to this shape is what
+ * lets **one** sweep cover the whole register — apartments and basement decks
+ * in one array — without an above-ground type being forced onto a below-ground
+ * record, and without a second sweep that could come to disagree with the
+ * first. Both `ValidatableUnit` and `ValidatableUndergroundUnit` satisfy it
+ * structurally; neither had to change.
+ */
+export interface ValidatableVolume extends Box3D {
+  readonly id: string
+  readonly unitNumber: string
+}
+
+/**
+ * One discovered 3D ownership conflict.
+ *
+ * Generic over the volume type, so a caller that swept a homogeneous array gets
+ * its own record type back rather than the narrowed one. `findOwnershipConflicts(units)`
+ * yields `OwnershipConflict<ValidatableUnit>` — floors and identifiers intact,
+ * which is what the conflict panel reads — while the register-wide sweep inside
+ * the engine yields the common shape, because a parking deck genuinely has no
+ * floor. One function, two honest return types, no cast at either call site.
+ */
+export interface OwnershipConflict<
+  TVolume extends ValidatableVolume = ValidatableVolume,
+> {
+  readonly unitA: TVolume
+  readonly unitB: TVolume
   /** `x × y × z` of the intersection, in cubic metres. */
   readonly intersectionVolumeCubicM: number
   /** Per-axis overlap, in metres. */
@@ -528,11 +566,11 @@ export interface OwnershipConflict {
  * asymptotically better and would be premature: the whole sweep is well under a
  * millisecond and it runs on a state change, not on a frame.
  */
-export function findOwnershipConflicts(
-  units: readonly ValidatableUnit[],
+export function findOwnershipConflicts<TVolume extends ValidatableVolume>(
+  units: readonly TVolume[],
   epsilon: number = OVERLAP_EPSILON_M,
-): OwnershipConflict[] {
-  const conflicts: OwnershipConflict[] = []
+): OwnershipConflict<TVolume>[] {
+  const conflicts: OwnershipConflict<TVolume>[] = []
 
   for (let i = 0; i < units.length; i++) {
     for (let j = i + 1; j < units.length; j++) {
@@ -552,14 +590,35 @@ export function findOwnershipConflicts(
   return conflicts
 }
 
+/**
+ * Every ownership volume in the model, above the datum and below it.
+ *
+ * The array the overlap sweep runs over. **It is the whole register, not the
+ * tower**, and that is a deliberate correction: a rule called "no two
+ * properties occupy the same volume" that only looked at twenty apartments was
+ * answering a narrower question than its name, and would have reported "no
+ * conflicts" on a model where a parking deck had risen through the ground-floor
+ * slab. The below-ground rules in `undergroundRules.ts` catch that case too,
+ * and say more precisely what it means — but they are a second opinion on it,
+ * not the only one, and the register-wide rule has to be able to fail on it.
+ */
+function allVolumes(input: TopologyInput): readonly ValidatableVolume[] {
+  return [...input.units, ...(input.undergroundUnits ?? [])]
+}
+
 function checkOwnershipOverlap(input: TopologyInput): ValidationResult[] {
-  const conflicts = findOwnershipConflicts(input.units)
+  const volumes = allVolumes(input)
+  const conflicts = findOwnershipConflicts(volumes)
   const affected = conflicts.flatMap((conflict) => [conflict.unitA.id, conflict.unitB.id])
 
   const totalVolume = conflicts.reduce(
     (sum, conflict) => sum + conflict.intersectionVolumeCubicM,
     0,
   )
+
+  // C(n, 2) over every 3D space: 190 for the tower alone, 231 once the two
+  // parking decks join it. Derived from the array's length, never stated.
+  const pairsTested = (volumes.length * (volumes.length - 1)) / 2
 
   return [
     {
@@ -572,17 +631,19 @@ function checkOwnershipOverlap(input: TopologyInput): ValidationResult[] {
           : `${conflicts.length} conflict${conflicts.length === 1 ? '' : 's'}`,
       message:
         conflicts.length === 0
-          ? 'No two property volumes intersect — shared walls and slabs only'
+          ? 'No two property volumes intersect — shared walls, slabs and the datum only'
           : `${conflicts.length} spatial ownership conflict(s) detected`,
       affectedUnitIds: [...new Set(affected)],
       details:
         conflicts.length === 0
           ? {
-              'Pairs tested': (input.units.length * (input.units.length - 1)) / 2,
+              'Pairs tested': pairsTested,
               'Intersecting pairs': 0,
+              'Above ground': input.units.length,
+              Underground: input.undergroundUnits?.length ?? 0,
             }
           : {
-              'Pairs tested': (input.units.length * (input.units.length - 1)) / 2,
+              'Pairs tested': pairsTested,
               'Intersecting pairs': conflicts.length,
               'Disputed volume': `${totalVolume.toFixed(1)} m³`,
               Pairs: conflicts
@@ -609,6 +670,13 @@ function checkOwnershipOverlap(input: TopologyInput): ValidationResult[] {
  * is a building whose generator and whose configuration disagree. That is a bug
  * worth surfacing loudly and not the same class of thing as two people owning
  * the same air, which is what the headline `CONFLICT` is reserved for.
+ *
+ * It counts **the whole register**, above the datum and below it. It used to
+ * count only the tower, which meant the one figure a presenter reads off the
+ * status bar — "how many properties does this record hold" — silently excluded
+ * the basement. `checkUndergroundCount` still reports the excavation on its
+ * own, because "the basement is short a deck" and "the building is short a
+ * flat" are different findings; this rule is the sum of them.
  */
 function checkStructureCount(input: TopologyInput): ValidationResult[] {
   const perFloor = new Map<number, number>()
@@ -619,8 +687,24 @@ function checkStructureCount(input: TopologyInput): ValidationResult[] {
   const wrongFloors = [...perFloor.entries()].filter(
     ([, count]) => count !== input.expectedUnitsPerFloor,
   )
+  // The below-ground half of the same question. Expected from the caller's own
+  // basement config when it states one; otherwise from the array itself, which
+  // makes the comparison vacuously true rather than inventing a target.
+  const undergroundCount = input.undergroundUnits?.length ?? 0
+  const expectedUnderground = input.expectedUndergroundSpaces ?? undergroundCount
+
   const countMatches =
-    input.units.length === input.expectedTotalUnits && wrongFloors.length === 0
+    input.units.length === input.expectedTotalUnits &&
+    undergroundCount === expectedUnderground &&
+    wrongFloors.length === 0
+
+  // **The register's total, derived by addition — never stated.** 20 above the
+  // datum plus 2 below it is 22, and the moment that 22 is typed anywhere it
+  // becomes a claim the software makes about itself rather than a measurement
+  // of what it produced. The chip reads "3D spaces" rather than "units" because
+  // that is what it now counts: a parking deck is not a unit.
+  const totalSpaces = input.units.length + undergroundCount
+  const expectedTotalSpaces = input.expectedTotalUnits + expectedUnderground
 
   return [
     {
@@ -628,10 +712,10 @@ function checkStructureCount(input: TopologyInput): ValidationResult[] {
       category: 'structure-count',
       status: countMatches ? 'pass' : 'warning',
       chip: countMatches
-        ? `${input.units.length} units`
-        : `${input.units.length}/${input.expectedTotalUnits} units`,
+        ? `${totalSpaces} 3D spaces`
+        : `${totalSpaces}/${expectedTotalSpaces} 3D spaces`,
       message: countMatches
-        ? `${input.units.length} property volumes across ${input.floors.length} floors, as configured`
+        ? `${totalSpaces} 3D spaces — ${input.units.length} across ${input.floors.length} floors, ${undergroundCount} below the datum, as configured`
         : `Generated structure differs from the configuration`,
       affectedUnitIds: [],
       details: {
@@ -639,6 +723,9 @@ function checkStructureCount(input: TopologyInput): ValidationResult[] {
         'Units expected': input.expectedTotalUnits,
         'Per floor': input.expectedUnitsPerFloor,
         Floors: input.floors.length,
+        Underground: undergroundCount,
+        'Underground expected': expectedUnderground,
+        'Total 3D spaces': totalSpaces,
         ...(wrongFloors.length > 0
           ? {
               Mismatched: wrongFloors
@@ -682,7 +769,10 @@ export function validateTopology(input: TopologyInput): TopologyReport {
     ...checkFloorHierarchy(input),
     ...checkUnitContainment(input),
     ...checkUnderground({
-      footprint: input.footprint,
+      // The excavation's own ring when the caller states one, the building's
+      // otherwise. Never a silent mix of the two: one value, chosen here.
+      basementFootprint: input.basementFootprint ?? input.footprint,
+      parcelBoundary: input.parcelBoundary,
       spaces: input.undergroundUnits ?? [],
       levels: input.basementLevels ?? [],
       // The above-ground volumes, so the cross-datum sweep is over the same

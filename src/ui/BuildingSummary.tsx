@@ -6,10 +6,10 @@ import {
 } from '../scene/buildingConfig'
 import type { ApartmentUnit } from '../scene/unitLayout'
 import {
-  getSpacesPerLevel,
   getTotalDepthM,
   type BasementConfig,
 } from '../underground/basementConfig'
+import { DEMO_BASEMENT_FOOTPRINT_METRICS } from '../underground/basementFootprint'
 import type { UndergroundSpace } from '../underground/undergroundLayout'
 
 /**
@@ -241,12 +241,28 @@ function BuildingSummary({
                 <dt>Underground spaces</dt>
                 <dd>{undergroundSpaces.length}</dd>
               </div>
+              {/* The excavation's OWN plan, and the row that makes the redesign
+                  legible in figures rather than only on screen: 396 m2 below
+                  ground against 252 m2 above it. Measured from the deck the
+                  scene draws, not from a config value, so the panel and the
+                  model cannot report different excavations. */}
+              <div className="summary-row">
+                <dt>Basement plan</dt>
+                <dd>
+                  {metres(sampleSpace.width)} &times; {metres(sampleSpace.depth)} m
+                </dd>
+              </div>
+              <div className="summary-row">
+                <dt>Area per deck</dt>
+                <dd>{sampleSpace.areaSqM.toFixed(0)} m&sup2;</dd>
+              </div>
+              <div className="summary-row">
+                <dt>Volume per deck</dt>
+                <dd>{sampleSpace.volumeCubicM.toFixed(0)} m&sup3;</dd>
+              </div>
               <div className="summary-row">
                 <dt>Spaces per level</dt>
-                <dd>
-                  {getSpacesPerLevel(basementConfig)} ({basementConfig.spaceColumns}{' '}
-                  &times; {basementConfig.spaceRows})
-                </dd>
+                <dd>1 (undivided deck)</dd>
               </div>
               <div className="summary-row summary-row-total">
                 <dt>Total 3D spaces</dt>
@@ -259,7 +275,8 @@ function BuildingSummary({
           ) : (
             <p className="summary-pending">
               Not generated. {undergroundSpaces.length} underground space(s) will be
-              cut beneath this footprint.
+              cut from the {DEMO_BASEMENT_FOOTPRINT_METRICS.areaSqM.toFixed(0)} m
+              &sup2; excavation footprint.
             </p>
           )}
 
@@ -271,8 +288,8 @@ function BuildingSummary({
           {isGenerated && (
             <p className="summary-note" role="note">
               {footprintMetrics.isAxisAlignedRectangle
-                ? 'Prototype: units and underground spaces are cut on a rectangular grid over the footprint’s bounding box.'
-                : 'Warning: this footprint is not rectangular, so the prototype grid overhangs the plan above and below ground.'}
+                ? 'Prototype: units are cut on a rectangular grid over the footprint’s bounding box; each basement level is one undivided deck over the excavation’s own, wider footprint.'
+                : 'Warning: this footprint is not rectangular, so the prototype grid overhangs the plan above ground.'}
             </p>
           )}
         </div>

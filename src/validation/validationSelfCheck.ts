@@ -42,8 +42,9 @@ import {
   buildBasementLevels,
   DEFAULT_BASEMENT_CONFIG,
   getTotalUndergroundSpaces,
-} from '../scene/basementConfig'
-import { buildUndergroundUnits } from '../scene/basementLayout'
+} from '../underground/basementConfig'
+import { DEMO_BASEMENT_FOOTPRINT } from '../underground/basementFootprint'
+import { buildUndergroundSpaces } from '../underground/undergroundLayout'
 import type { CheckResult } from '../ulpin/ulpinSelfCheck'
 import { getVolumeIntersection } from './aabb'
 import {
@@ -86,13 +87,27 @@ function healthyInput(): TopologyInput {
 }
 
 /**
- * The healthy input **with an excavation** — the Phase 11 model.
+ * The healthy input **with an excavation** — assembled exactly as `App` does.
  *
  * A second builder rather than a basement added to `healthyInput()`, deliberately:
  * keeping the basement-free input intact is what lets the checks assert that the
  * engine's behaviour on a model with no excavation is *unchanged* — that the
  * below-ground rules are skipped rather than run and found empty, and that the
  * counts still describe only what was handed in.
+ *
+ * IT BUILDS THE MODEL THE APPLICATION ACTUALLY RENDERS. This used to construct
+ * the *other* underground record type — `scene/basementLayout`'s subdivided
+ * `UndergroundUnit`, four quarter-boxes cut from the tower's ring — while `App`
+ * generated `underground/undergroundLayout`'s spaces. Two models, one
+ * validator, and a self-check that could go on passing while the model the
+ * demonstration shows drifted away from it. It now generates the same two
+ * parking decks from the same excavation footprint, so a failure here is a
+ * failure a viewer could see.
+ *
+ * Note the two rings. `footprint` is the tower's, 18 × 14 m, inherited from
+ * `healthyInput()`; `basementFootprint` is the excavation's own, 22 × 18 m.
+ * The decks are deliberately wider than the building, so a validator that
+ * confused the two would report this correct model as an encroachment.
  */
 function basementInput(): TopologyInput {
   const basementConfig = DEFAULT_BASEMENT_CONFIG
@@ -100,12 +115,13 @@ function basementInput(): TopologyInput {
 
   return {
     ...healthyInput(),
-    undergroundUnits: buildUndergroundUnits(
+    undergroundUnits: buildUndergroundSpaces(
       basementConfig,
-      DEMO_BUILDING_FOOTPRINT,
+      DEMO_BASEMENT_FOOTPRINT,
       basementLevels,
     ),
     basementLevels,
+    basementFootprint: DEMO_BASEMENT_FOOTPRINT,
     expectedUndergroundSpaces: getTotalUndergroundSpaces(basementConfig),
     parentParcelId: DEMO_PARCEL.parcelId,
   }
@@ -441,18 +457,19 @@ export function checkTopologyValidation(): CheckResult[] {
     ),
   )
 
-  /* ── HALF THREE: below the ground datum (Phase 11) ─────────────────────────
+  /* ── HALF THREE: below the ground datum ────────────────────────────────────
 
      Structured exactly like the two halves above, and for the same reason: a
      validator that has been taught about basements is worth nothing unless it
      can still fail on one.
 
-     The healthy case is checked FIRST and hardest, because the boundary it turns
-     on is a shared plane rather than a shared wall. Every one of the four
-     underground volumes touches a ground-floor unit at exactly y = 0, so a
-     validator with `>=` where `>` was meant would report four cross-datum
-     conflicts in a perfectly correct model — and, unlike the shared-wall case,
-     it would do so in the half of the model a presenter is about to point at. */
+     The healthy case is checked FIRST and hardest, because the boundaries it
+     turns on are shared planes rather than shared walls, and this model has two
+     of them: B1's ceiling is exactly the ground-floor slab at y = 0, and B1's
+     floor is exactly B2's ceiling at y = -3. A validator with `>=` where `>` was
+     meant would report both as conflicts in a perfectly correct model — and,
+     unlike the shared-wall case above ground, it would do so in the half of the
+     model a presenter is about to point at. */
 
   const withBasement = basementInput()
   const basementReport = validateTopology(withBasement)
@@ -476,11 +493,30 @@ export function checkTopologyValidation(): CheckResult[] {
       'pass',
       `${basementReport.results.find((r) => r.id === 'surface-adjacency')?.status}`,
     ),
+    // `parcel-consistency` is the engine's own id for this rule. The check used
+    // to look for `parcel-linkage`, a name that exists nowhere in the engine, so
+    // `find` returned undefined, `undefined?.status === 'pass'` was false, and
+    // the check failed for a reason that had nothing to do with parcels.
     expect(
-      'basement: the parcel-linkage rule ties all 24 volumes to one parcel',
-      basementReport.results.find((r) => r.id === 'parcel-linkage')?.status === 'pass',
+      'basement: the parcel rule ties every 3D space to one parcel',
+      basementReport.results.find((r) => r.id === 'parcel-consistency')?.status ===
+        'pass',
       'pass',
-      `${basementReport.results.find((r) => r.id === 'parcel-linkage')?.status}`,
+      `${basementReport.results.find((r) => r.id === 'parcel-consistency')?.status}`,
+    ),
+    expect(
+      'basement: the excavation footprint is checked against the parcel',
+      basementReport.results.find((r) => r.id === 'basement-within-parcel')?.status ===
+        'pass',
+      'pass',
+      `${basementReport.results.find((r) => r.id === 'basement-within-parcel')?.status}`,
+    ),
+    expect(
+      'basement: the decks are checked against the EXCAVATION ring, not the tower',
+      basementReport.results.find((r) => r.id === 'underground-within-footprint')
+        ?.status === 'pass',
+      'pass',
+      `${basementReport.results.find((r) => r.id === 'underground-within-footprint')?.status}`,
     ),
   )
 
@@ -532,11 +568,11 @@ export function checkTopologyValidation(): CheckResult[] {
 
   /* ── Deliberately broken basements. Each must be CAUGHT. ─────────────── */
 
-  // 1. A volume lifted 0.5 m so it reaches up through the datum into Floor 1.
-  //    This is the phase's characteristic fault — subsurface rights claiming
+  // 1. B1 lifted 0.5 m so it reaches up through the datum into Floor 1. This is
+  //    the characteristic below-ground fault — subsurface rights claiming
   //    surface space — and it must fire on BOTH the generic overlap rule and the
   //    adjacency rule that names it for what it is.
-  const risen = withUndergroundReplaced(withBasement, 'B01-P01', (volume) => ({
+  const risen = withUndergroundReplaced(withBasement, 'B1', (volume) => ({
     ...volume,
     yMin: volume.yMin + 0.5,
     yMax: volume.yMax + 0.5,
@@ -563,16 +599,16 @@ export function checkTopologyValidation(): CheckResult[] {
       `${risenReport.results.find((r) => r.id === 'ownership-overlap')?.status}`,
     ),
     expect(
-      'broken: it leaves the excavated interval, and containment says so',
-      risenReport.results.find((r) => r.id === 'underground-within-basement')?.status ===
+      'broken: it leaves the interval its own level records, and the rule says so',
+      risenReport.results.find((r) => r.id === 'underground-within-level')?.status ===
         'fail',
       'fail',
-      `${risenReport.results.find((r) => r.id === 'underground-within-basement')?.status}`,
+      `${risenReport.results.find((r) => r.id === 'underground-within-level')?.status}`,
     ),
   )
 
-  // 2. A volume slid 30 m east, off the plot entirely.
-  const displaced = withUndergroundReplaced(withBasement, 'B01-S01', (volume) => ({
+  // 2. B2 slid 30 m east, off the excavation — and off the plot — entirely.
+  const displaced = withUndergroundReplaced(withBasement, 'B2', (volume) => ({
     ...volume,
     xMin: volume.xMin + 30,
     xMax: volume.xMax + 30,
@@ -591,17 +627,25 @@ export function checkTopologyValidation(): CheckResult[] {
       'broken: and the finding names the right volume',
       displacedReport.results
         .find((r) => r.id === 'underground-within-footprint')
-        ?.affectedUnitIds.includes('space-B01-S01') === true,
-      'space-B01-S01',
+        ?.affectedUnitIds.includes('underground-B02') === true,
+      'underground-B02',
       `${displacedReport.results.find((r) => r.id === 'underground-within-footprint')?.affectedUnitIds.join(', ')}`,
     ),
   )
 
-  // 3. Two basement volumes genuinely interpenetrating.
+  // 3. The two decks genuinely interpenetrating. They are stacked rather than
+  //    side by side, so the fault that matters here is vertical: B2 raised 1.5 m
+  //    pushes its ceiling to -1.5 m, a metre and a half up inside B1. Sliding it
+  //    sideways would not overlap anything, because nothing shares its
+  //    elevation — which is exactly the point the third axis is making.
   const overlappingBasement = withUndergroundReplaced(
     withBasement,
-    'B01-P02',
-    (volume) => ({ ...volume, xMin: volume.xMin - 4, xMax: volume.xMax - 4 }),
+    'B2',
+    (volume) => ({
+      ...volume,
+      yMin: volume.yMin + 1.5,
+      yMax: volume.yMax + 1.5,
+    }),
   )
 
   results.push(
@@ -615,7 +659,7 @@ export function checkTopologyValidation(): CheckResult[] {
 
   // 4. A basement volume re-parented to a different parcel. The geometry is
   //    perfect; the linkage is not, and only the linkage rule can see it.
-  const reparented = withUndergroundReplaced(withBasement, 'B01-U01', (volume) => ({
+  const reparented = withUndergroundReplaced(withBasement, 'B2', (volume) => ({
     ...volume,
     parentParcelId: 'KA-BLR-0482-999999',
   }))
@@ -624,9 +668,10 @@ export function checkTopologyValidation(): CheckResult[] {
   results.push(
     expect(
       'broken: a volume tied to a different parent parcel is CAUGHT',
-      reparentedReport.results.find((r) => r.id === 'parcel-linkage')?.status === 'fail',
+      reparentedReport.results.find((r) => r.id === 'parcel-consistency')?.status ===
+        'fail',
       'fail',
-      `${reparentedReport.results.find((r) => r.id === 'parcel-linkage')?.status}`,
+      `${reparentedReport.results.find((r) => r.id === 'parcel-consistency')?.status}`,
     ),
     expect(
       'broken: and its geometry rules still pass, so the finding is specific',
@@ -640,7 +685,7 @@ export function checkTopologyValidation(): CheckResult[] {
   // 5. A duplicated identifier ACROSS the datum — an underground volume given an
   //    apartment's ULPIN. Neither generator's own uniqueness assertion could see
   //    this; only a check over the whole model can.
-  const collided = withUndergroundReplaced(withBasement, 'B01-P01', (volume) => ({
+  const collided = withUndergroundReplaced(withBasement, 'B1', (volume) => ({
     ...volume,
     prototypeUlpin: withBasement.units[0].prototypeUlpin,
   }))
@@ -705,7 +750,12 @@ export function runTopologyValidationSelfCheck(): void {
     )
   }
 
-  console.error(
-  `[3D ULPIN] topology validation self-check failed (${failures.length} of ${results.length}).`,
-)
+  // Fatal, like every other self-check in this project. This was temporarily
+  // downgraded to a `console.error` while the below-ground assertions were
+  // being repaired; the assertions now pass, so the contract is restored. A
+  // validator that has silently stopped catching things must not be something a
+  // presenter can scroll past.
+  throw new Error(
+    `[3D ULPIN] topology validation self-check failed (${failures.length} of ${results.length}).`,
+  )
 }

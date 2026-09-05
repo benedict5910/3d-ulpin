@@ -1030,6 +1030,40 @@ body {
   color: var(--muted);
 }
 
+/* ── Below the ground datum ───────────────────────────────────────────────
+
+   Two rules that were referenced by `SceneLabels.tsx` and never written, so
+   every below-ground label fell back to the bare `.scene-label` and read
+   exactly like an above-ground one. That is the single worst thing a label in
+   this scene can do: the entire argument being made is that a volume's side of
+   the datum is a fact about the record, and a caption that gave a parking deck
+   the same weight and colour as a floor marker quietly said the opposite.
+
+   Both take the same cool blue-grey as the deck geometry itself
+   (`UndergroundSpaces.tsx`), so a caption and the volume it names read as one
+   object. Restrained, per this file's standing rule: a tint and a border, no
+   glow, nothing that animates. */
+
+/* The deck captions — `B1 · PARKING` — and the basement rungs of the exploded
+   ladder. Slightly brighter than a floor label, because underground they are
+   read against a ghosted ground plane rather than open sky, and a label at
+   floor-label weight down there disappears. */
+.scene-label-basement {
+  border-color: rgba(122, 158, 191, 0.42);
+  background: rgba(9, 14, 20, 0.9);
+  color: #b7cbdd;
+  letter-spacing: 0.08em;
+}
+
+/* A selected below-ground volume. It keeps `.scene-label-unit`'s amber — one
+   selection colour for the whole register, above and below — and adds only the
+   below-ground border, so "this is selected" and "this is underground" are two
+   readable facts rather than one overridden by the other. */
+.scene-label-space {
+  border-color: rgba(151, 176, 199, 0.55);
+  background: rgba(9, 14, 20, 0.9);
+}
+
 /* ── Phase 10: the three conflict-presentation labels ─────────────────────
 
    They form a deliberate three-step hierarchy in weight, matching the

@@ -198,6 +198,73 @@ export function generateUndergroundPrototype3DULPIN(
 }
 
 /**
+ * The use segment for a whole parking deck: `PARK`.
+ *
+ * A word, not a letter-plus-ordinal. The `P01` / `S01` / `U01` scheme counted
+ * *within a use, within a level* — `P02` meant "the second parking bay on this
+ * level" — and it was the right encoding while a level held four separately
+ * held volumes. Since the underground redesign a level holds exactly one, so
+ * there is no ordinal left to count and the segment's whole job is to say what
+ * the space **is**. `PARK` says that to a reader without a legend; `P01` would
+ * leave them looking for `P02`.
+ *
+ * PROTOTYPE ONLY. Invented for this demonstration, like every other segment in
+ * this file. No published Government of India scheme defines it.
+ */
+export const PARKING_DECK_CODE = 'PARK'
+
+/**
+ * Build the prototype 3D ULPIN for one whole **basement deck**.
+ *
+ *   generateUndergroundDeckPrototype3DULPIN(DEMO_PARCEL_IDENTITY, 1, 'PARK')
+ *     -> "KA-BLR-0482-001928-B01-PARK"
+ *
+ *   KA-BLR-0482-001928-B01-PARK
+ *   └──────┬─────────┘ └┬┘ └─┬┘
+ *    parent parcel  basement  use of the whole level
+ *
+ * @param parcel        the land parcel the excavation sits under
+ * @param basementLevel 1-based basement level; the first level below the ground
+ *                      datum is 1, not 0 and not −1
+ * @param useCode       the use of the level, in capitals — `PARK` today
+ *
+ * A sibling of `generateUndergroundPrototype3DULPIN` rather than a mode of it,
+ * for the reason this module already gives for keeping the above- and
+ * below-ground encoders apart: the two produce different strings from
+ * similarly-shaped inputs, and a flag would let a caller emit the wrong shape
+ * by getting one argument wrong. The subdivided encoder above is retained
+ * because `scene/basementLayout.ts` still produces the subdivided record type;
+ * nothing in the live pipeline calls it any more.
+ *
+ * The use code is validated rather than trusted: two to six capitals, so a
+ * lower-case `park` or a stray `PARK-1` is reported where it was introduced
+ * instead of producing a plausible-looking identifier of the wrong shape.
+ *
+ * Composed from structured fields and nothing else, so it is deterministic in
+ * exactly the way the other two encoders are: same parcel, level and use, same
+ * string, forever.
+ */
+export function generateUndergroundDeckPrototype3DULPIN(
+  parcel: ParcelIdentity,
+  basementLevel: number,
+  useCode: string,
+): string {
+  assertPositiveInteger('basementLevel', basementLevel)
+
+  if (!/^[A-Z]{2,6}$/.test(useCode)) {
+    throw new Error(
+      `[3D ULPIN] basement deck use code must be 2-6 capital letters; received "${useCode}"`,
+    )
+  }
+
+  return [
+    formatParentParcelId(parcel),
+    `${BASEMENT_PREFIX}${padSegment(basementLevel)}`,
+    useCode,
+  ].join(SEGMENT_SEPARATOR)
+}
+
+/**
  * Every identifier that appears more than once in a list, in first-seen order.
  *
  * A pure function returning data, not a boolean and not a throw, so the caller

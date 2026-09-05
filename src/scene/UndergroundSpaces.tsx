@@ -17,7 +17,8 @@ import {
 import { getUnitStatus } from './unitStatus'
 
 /**
- * The four underground property volumes, drawn below the ground datum.
+ * The underground property volumes — two broad parking decks — drawn below the
+ * ground datum.
  *
  * The below-ground sibling of `Building.tsx`, and deliberately built the same
  * way: one mesh per record, positioned from the record's own bounds, with a
@@ -45,22 +46,20 @@ const SPACE_VISUAL_GAP = 0.06
 const ORIGIN: PlanPoint = { x: 0, z: 0 }
 
 /**
- * A palette keyed by **use**, not by a checkerboard.
+ * A palette keyed by **use**.
  *
- * Above ground the twenty units are all `Residential` and are distinguished by
- * a two-tone checker so that neighbours never share a shade. Down here the four
- * spaces have three genuinely different uses, so colour is spent on the fact
- * that actually differs — which is also what makes the property-type row in the
- * inspector verifiable by looking at the model.
+ * It used to hold three entries, because a level was cut into four volumes with
+ * three different uses and colour was spent on the fact that differed. A level
+ * is now one parking deck, so there is one entry — and the fact worth spending
+ * colour on has moved: it is which **side of the datum** a volume is on. This
+ * blue-grey is darker and cooler than the slate above, so an audience can tell
+ * a deck from an apartment without reading a label.
  *
- * All three are darker and cooler than the slate above. That is the second job
- * the palette does: an audience should be able to tell which side of the datum
- * a volume is on without reading a label.
+ * Still a `Record` over the union rather than a single constant: the day the
+ * model records a substation, the compiler asks here what colour it gets.
  */
 const SPACE_COLORS: Readonly<Record<UndergroundSpaceType, string>> = {
   Parking: '#3d5468',
-  Storage: '#4a4a63',
-  Utility: '#3f5a54',
 }
 
 /** Selection appearance — the identical amber the units above ground use. */
@@ -185,6 +184,10 @@ function UndergroundSpaces({
 
   /**
    * The plan centre of each basement level, for the unit-level explosion.
+   *
+   * With one deck per level the centre is simply that deck's own centre, so the
+   * unit-level explosion moves it nowhere — which is correct: there is nothing
+   * on a level for it to disperse away from.
    *
    * Measured from the volumes themselves by the same shared helper the floors
    * above use, so a volume disperses away from the middle of *its own level*
