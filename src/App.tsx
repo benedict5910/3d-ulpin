@@ -1308,19 +1308,27 @@ function App() {
             basementPlanCentres={basementPlanCentres}
           />
 
-          {/* Still an overlay, and still deliberately so: the summary describes
-              the scene it sits on. */}
-          <BuildingSummary
-            config={config}
-            footprintMetrics={footprintMetrics}
-            units={units}
-            basementConfig={basementConfig}
-            undergroundSpaces={undergroundSpaces}
-            isGenerated={isGenerated}
-          />
+          {/* The left-hand read-outs, stacked in one overlay rail rather than
+              each pinned at its own absolute offset. The summary is now a
+              compact card that grows when its details are expanded, so a fixed
+              `top` for the isolation panel beneath it would either overlap the
+              expanded card or float clear of the collapsed one. One flow
+              container, and the two keep their order in every state. */}
+          <div className="scene-overlay-left">
+            {/* Still an overlay, and still deliberately so: the summary describes
+                the scene it sits on. */}
+            <BuildingSummary
+              config={config}
+              footprintMetrics={footprintMetrics}
+              units={units}
+              basementConfig={basementConfig}
+              undergroundSpaces={undergroundSpaces}
+              isGenerated={isGenerated}
+            />
 
-          {/* The layer currently in focus, under the summary it narrows. */}
-          <FloorIsolationPanel summary={isolationSummary} />
+            {/* The layer currently in focus, under the summary it narrows. */}
+            <FloorIsolationPanel summary={isolationSummary} />
+          </div>
 
           {/* How to look at it — top right, away from what changes it. */}
           <ViewControls

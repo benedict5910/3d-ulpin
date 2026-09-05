@@ -68,10 +68,20 @@ body {
    back. The explicit 0 minimum removes that floor.
 
    min-height: 0 lets this 1fr row of the page grid shrink instead of
-   overflowing — the same reason it was here before. */
+   overflowing — the same reason it was here before.
+
+   LAYOUT REFINEMENT: the three columns are no longer equals. The 3D model is
+   the thing this application exists to show, so the flanking columns are sized
+   to the *narrowest* they can be while staying readable, and everything left
+   over goes to the middle. The map needs enough width for the parcel outline
+   and its two-column record (240 px, down from 336); the inspector carries a
+   ULPIN string and sentence-length findings and does not compress as well, so
+   it keeps 306 px. On a 1920 px screen that hands the viewer ~96 px it did not
+   have before and, more to the point, changes which column reads as the
+   subject. */
 .viewer {
   display: grid;
-  grid-template-columns: 336px minmax(0, 1fr) 306px;
+  grid-template-columns: 240px minmax(0, 1fr) 306px;
   min-height: 0;
 }
 
@@ -120,19 +130,40 @@ body {
   border-left: 1px solid var(--border);
 }
 
-/* Building summary — an HTML panel floating over the 3D canvas. */
-.building-summary {
+/* The left-hand overlay rail: the model summary, and the floor-isolation panel
+   under it. Both used to be pinned at absolute offsets (16 px and 176 px) which
+   only agreed with each other while the summary was exactly one height. The
+   summary is now compact and expandable, so they stack in one flow container
+   and the rail owns the gutter between them.
+
+   `pointer-events: none` here rather than on each card: the whole rail is a
+   read-out over an orbitable canvas, and only the disclosure inside it takes
+   the pointer back (see `.summary-details`).
+
+   The height cap keeps an expanded panel clear of the generate bar at the foot
+   of the viewer instead of running under it. */
+.scene-overlay-left {
   position: absolute;
   top: 16px;
   left: 16px;
-  min-width: 218px;
-  padding: 14px 16px;
+  z-index: 2;
+  width: 224px;
+  max-height: calc(100% - 104px);
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  pointer-events: none;
+}
+
+/* Model summary — an HTML panel floating over the 3D canvas. Compact by
+   default: five headline figures, then a disclosure. */
+.building-summary {
+  width: 100%;
+  padding: 12px 14px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--panel);
   backdrop-filter: blur(6px);
-  /* Purely informational, so it must not swallow orbit/zoom drags. */
-  pointer-events: none;
 }
 
 /* Property inspector — the mirror of the summary, on the right-hand side.
@@ -249,6 +280,88 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* ── The compact model summary and its disclosure ─────────────────────────── */
+
+/* The five headline rows. Slightly tighter than a detail list — this is a
+   glance-at-it block, not a table to read down — and the label/value gap is
+   allowed to collapse because the rail is narrow. */
+.summary-headline .summary-row {
+  gap: 10px;
+  font-size: 0.8125rem;
+}
+
+/* The disclosure. `details`/`summary`, so the state, the keyboard handling and
+   the accessible name are the element's rather than ours — no library, no
+   component state. Pointer events come back on here alone: the rest of the
+   rail must stay transparent to an orbit drag. */
+.summary-details {
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--border);
+  pointer-events: auto;
+}
+
+.summary-details-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  list-style: none;
+  cursor: pointer;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  user-select: none;
+}
+
+/* Safari still draws the default disclosure triangle without this. */
+.summary-details-toggle::-webkit-details-marker {
+  display: none;
+}
+
+/* Our own marker: a caret that turns with the state, drawn in CSS rather than
+   shipped as an icon. */
+.summary-details-toggle::before {
+  content: '▸';
+  font-size: 0.75rem;
+  line-height: 1;
+  transition: transform 120ms ease;
+}
+
+.summary-details[open] > .summary-details-toggle::before {
+  transform: rotate(90deg);
+}
+
+.summary-details-toggle:hover,
+.summary-details[open] > .summary-details-toggle {
+  color: var(--text);
+}
+
+.summary-details-toggle:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+
+/* Expanded, the detail groups can be taller than the viewport on a laptop, so
+   the body scrolls inside the card rather than the card growing past the
+   scene. */
+.summary-details-body {
+  max-height: 46vh;
+  margin-top: 4px;
+  overflow-y: auto;
+}
+
+/* The first group heading sits directly under the toggle, which already ruled
+   itself off from the headline block. A second rule there would read as an
+   empty section. */
+.summary-details-body > .summary-title-secondary:first-child {
+  margin-top: 8px;
+  padding-top: 0;
+  border-top: none;
+}
+
 .app-footer {
   display: flex;
   flex-wrap: wrap;
@@ -294,7 +407,9 @@ body {
 .gis-map {
   position: relative;
   min-width: 0;
-  min-height: 260px;
+  /* Supporting context, not the subject: enough map to read the parcel and its
+     footprint against the basemap, and no more than that. */
+  min-height: 220px;
 }
 
 /* Leaflet's own root element. It fills the wrapper above rather than carrying
@@ -401,7 +516,7 @@ body {
    deliberately: it is a third read-out of the same model, not a new kind of
    thing. */
 .parcel-info {
-  padding: 12px 14px;
+  padding: 10px 12px;
   border-top: 1px solid var(--border);
 }
 
@@ -550,6 +665,11 @@ body {
   padding-top: 9px;
   border-top: 1px solid var(--border);
   font-style: italic;
+}
+
+/* The pre-generation line, when it sits directly under the headline block. */
+.building-summary > .summary-pending {
+  margin-top: 9px;
 }
 
 /* ── The pipeline status card ───────────────────────────────────────────── */
@@ -830,18 +950,17 @@ body {
    card language as the summary deliberately: it is the same model, read at a
    narrower scale. `pointer-events: none` for the same reason the summary has
    it — the panel is informational and must not swallow an orbit drag. */
+/* No longer pinned at `top: 176px`: it is the second card in
+   `.scene-overlay-left`, so it sits under the summary at whatever height the
+   summary currently is, collapsed or expanded. */
 .isolation-panel {
-  position: absolute;
-  top: 176px;
-  left: 16px;
-  min-width: 218px;
-  padding: 12px 16px 13px;
+  width: 100%;
+  padding: 11px 14px 12px;
   border: 1px solid rgba(74, 222, 128, 0.32);
   border-left: 3px solid var(--accent);
   border-radius: 8px;
   background: var(--panel);
   backdrop-filter: blur(6px);
-  pointer-events: none;
 }
 
 .isolation-kicker {
@@ -1673,8 +1792,18 @@ body {
   color: var(--accent);
 }
 
+/* Between roughly 1100 px and a full-width laptop the columns still work as
+   three, but 240 + 306 px of panels is a larger share of a 1280 px screen than
+   of a 1920 px one. Both flanks give back a little so the middle keeps the
+   majority of the width at every desktop size rather than only the largest. */
+@media (min-width: 1101px) and (max-width: 1440px) {
+  .viewer {
+    grid-template-columns: 220px minmax(0, 1fr) 292px;
+  }
+}
+
 /* Below roughly a laptop's width the three columns stop being three columns:
-   336 + 306 px of panels leaves the 3D viewer too little to be worth orbiting.
+   240 + 306 px of panels leaves the 3D viewer too little to be worth orbiting.
    They stack instead, and the page is allowed to scroll — the only place in
    this application where it is. */
 @media (max-width: 1100px) {
@@ -1741,11 +1870,10 @@ body {
     bottom: 96px;
   }
 
-  .isolation-panel {
-    top: auto;
-    bottom: 16px;
-    left: 16px;
-    min-width: 0;
+  /* The rail is in flow now, so the isolation panel needs no override of its
+     own; the rail just gives back a little width on a narrow screen. */
+  .scene-overlay-left {
+    width: 208px;
   }
 
   .inspector-panel {
