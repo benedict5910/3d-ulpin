@@ -2011,14 +2011,11 @@ react / three / @react-three / react-leaflet and it cannot render. Treat
 **To be decided later.** One of:
 
 - **Final presentation polish** — the demo script, timing, and whatever the host
-  verification of Subphases F and G turns up.
-- **Basement / below-ground volumes** — negative elevations, which the floor
-  model and the validator would both need to be taught about.
+  verification of Subphases F, G and H turns up.
 - **AI-assisted input** — deliberately last, and deliberately not started.
 
-None of the three has been begun. Subphases F and G added no AI, no backend, no
-database and no basement, on purpose — G added no feature at all, only a better
-place to put one.
+Neither has been begun. Subphase H (below) added no AI, no backend, no database
+and no export.
 
 ### How to resume this work
 
@@ -2031,3 +2028,39 @@ place to put one.
 3. Every pure module has a `check*()` function returning `CheckResult[]` and a
    dev-only `run*SelfCheck()`. `App.tsx` runs them all under `import.meta.env.DEV`.
 4. Do not commit. Do not touch `.git`. Verification happens on the Windows host.
+
+---
+
+## Phase 10 — Subphase H: basement / below-ground volumes
+
+**Recovered state.** The previous session ended at commit `b30eaae`
+("Milestone: complete advanced 3D cadastre conflict workflow") with a **clean
+working tree and no basement code of any kind** — the phase had not started, so
+nothing was resumed and nothing was reimplemented.
+
+**Completed now.** Basement config and level layouts (−3.0 → 0.0 m); underground
+space model on the building's own footprint; `B01-U0n` prototype identifiers;
+underground topology rules (levels, containment, interval, overlap within and
+across the datum, count) plus register-wide identifier uniqueness and
+parcel consistency; underground view mode with ghosted tower, thinned ground
+plane, drawn `y = 0` datum ring, relaxed orbit limit and an `Underground` camera
+preset; downward exploded separation; selection, Property Inspector, ownership
+hierarchy and summary totals for underground spaces through the **existing**
+single-selection and single-inspector architecture.
+
+**Unfinished.** None in this subphase.
+
+**Self-check result.** 18 new underground checks pass; the 61 pre-existing pure
+checks (topology 25, exploded 15, ULPIN 4, footprint 17) still pass unchanged.
+Model: basement −3.0 → 0.0 m, 4 underground spaces, 20 + 4 = **24** 3D spaces,
+all identifiers unique, one parent parcel, `status: valid`; the staged conflict
+still reports `conflict` on `unit-301` / `unit-302` with every underground rule
+passing.
+
+**Host verification required.** All of the above is *source* complete and
+type-clean; nothing in this session ran Vite, a browser or the real
+`react` / `three` / `@react-three` packages. Run `npm run typecheck` and
+`npm run dev` on the Windows host before treating any of it as working.
+
+**LAST SAFE SOURCE CHECKPOINT:** commit `b30eaae` (unchanged — nothing was
+committed). Working tree now carries Subphase H, uncommitted.

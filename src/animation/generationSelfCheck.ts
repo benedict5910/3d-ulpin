@@ -55,6 +55,11 @@ import { getFootprintMetrics } from '../geometry/footprint'
 import { DEFAULT_BUILDING_CONFIG, getTotalHeight } from '../scene/buildingConfig'
 import { buildFloorPlanCentres, NO_EXPLOSION } from '../scene/explodedView'
 import { buildApartmentUnits } from '../scene/unitLayout'
+import {
+  DEFAULT_BASEMENT_CONFIG,
+  getTotalDepthM,
+} from '../underground/basementConfig'
+import { buildUndergroundSpaces } from '../underground/undergroundLayout'
 import type { CheckResult } from '../ulpin/ulpinSelfCheck'
 import { getGenerationVisuals } from './generationTimeline'
 
@@ -262,6 +267,10 @@ export function checkGenerationTimeline(): CheckResult[] {
   // subject from whether a timeline is monotonic.
   const units = buildApartmentUnits(config, DEMO_BUILDING_FOOTPRINT)
   const floorThree = units.find((unit) => unit.unitNumber === '301')
+  const undergroundSpaces = buildUndergroundSpaces(
+    DEFAULT_BASEMENT_CONFIG,
+    DEMO_BUILDING_FOOTPRINT,
+  )
 
   const metrics = getFootprintMetrics(DEMO_BUILDING_FOOTPRINT)
   const totalHeightM = getTotalHeight(config)
@@ -285,6 +294,12 @@ export function checkGenerationTimeline(): CheckResult[] {
     // has not been given must still return a finite view rather than NaN, which
     // is why `conflict` joins the list below.
     conflictFraming: null,
+    // The real basement, not an empty list: the `underground` preset must be
+    // checked against a model that actually has one, or the finite-coordinates
+    // sweep below would only ever exercise its fallback.
+    undergroundSpaces: undergroundSpaces,
+    basementLevelCount: DEFAULT_BASEMENT_CONFIG.numberOfLevels,
+    totalDepthM: getTotalDepthM(DEFAULT_BASEMENT_CONFIG),
   }
 
   const presets: CameraPresetId[] = [
@@ -294,6 +309,7 @@ export function checkGenerationTimeline(): CheckResult[] {
     'unit',
     'floor',
     'conflict',
+    'underground',
   ]
   const nonFinite = presets.filter((preset) => {
     const view = getPresetView(preset, baseContext)
@@ -324,6 +340,12 @@ export function checkGenerationTimeline(): CheckResult[] {
       JSON.stringify(unitViewWithoutSelection) === JSON.stringify(buildingView),
       'identical to building view',
       'compared',
+    ),
+    expect(
+      'underground view aims below the ground datum',
+      getPresetView('underground', baseContext).target[1] < 0,
+      '< 0 m',
+      `${getPresetView('underground', baseContext).target[1].toFixed(2)} m`,
     ),
     expect(
       'unit view targets the selected unit',

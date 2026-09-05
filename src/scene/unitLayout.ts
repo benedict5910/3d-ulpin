@@ -69,6 +69,20 @@ const DEFAULT_PROPERTY_TYPE: PropertyType = 'Residential'
 export interface ApartmentUnit {
   /** Stable unique key for this unit within the building, e.g. `unit-301`. */
   readonly id: string
+  /**
+   * Which side of the ground datum this property sits on.
+   *
+   * PHASE 11. Always `'above-ground'` for an apartment — it is a constant on this
+   * type, not a variable — and that is exactly what makes it useful: paired with
+   * `UndergroundUnit`'s `'underground'` it forms a **discriminated union**
+   * (`scene/propertyVolume.ts`) that the compiler can narrow. A selection that
+   * could be either kind of volume is resolved by reading one field, rather than
+   * by probing for the presence of `floorLevel` — a structural test is a rule a
+   * person has to remember, a tag is one the compiler enforces.
+   *
+   * See `geometry/groundDatum.ts` for what the two tiers mean.
+   */
+  readonly tier: 'above-ground'
   /** 1-based floor the unit sits on. Ground floor is 1. */
   readonly floorLevel: number
   /**
@@ -240,6 +254,7 @@ function buildUnitsForFloor(
 
       units.push({
         id: `unit-${formatUnitNumber(floor.level, indexOnFloor)}`,
+        tier: 'above-ground',
         floorLevel: floor.level,
         indexOnFloor,
         unitNumber: formatUnitNumber(floor.level, indexOnFloor),

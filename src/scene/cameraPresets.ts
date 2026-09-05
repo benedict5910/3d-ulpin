@@ -29,6 +29,7 @@ import type { FloorLayout } from './buildingConfig'
 import type { FootprintMetrics } from '../geometry/footprint'
 import type { ConflictFraming } from '../simulation/conflictPresentation'
 import {
+  getExplodedApparentDepthM,
   getExplodedApparentHeightM,
   getExplodedApparentSpreadM,
   getExplodedOffsetM,
@@ -36,6 +37,7 @@ import {
   type ExplodeAmounts,
   type PlanPoint,
 } from './explodedView'
+import type { UndergroundSpace } from '../underground/undergroundLayout'
 import type { ApartmentUnit } from './unitLayout'
 
 /**
@@ -56,6 +58,13 @@ export type CameraPresetId =
   | 'unit'
   | 'floor'
   | 'conflict'
+  /**
+   * Below the datum. Chosen from the control group like the other five, and
+   * applied automatically when the underground view is entered — one press,
+   * one arrival, rather than a mode change followed by a hunt for the layer it
+   * revealed.
+   */
+  | 'underground'
 
 /** A camera placement: where the eye is, and what it looks at. Metres. */
 export interface CameraView {
@@ -112,6 +121,20 @@ export interface CameraPresetContext {
    * falls back to the building view when absent — the function stays total.
    */
   readonly conflictFraming: ConflictFraming | null
+  /**
+   * The underground spaces, or an empty list when the model has no basement.
+   *
+   * Only the `underground` preset reads it, and — like `selectedUnit` and
+   * `isolatedFloor` — an empty list falls back to the building view, so the
+   * function stays total. It takes the *spaces* rather than a depth number
+   * because the view is framed on the volumes' own recorded bounds: the camera
+   * looks at what the register contains, not at what the config permits.
+   */
+  readonly undergroundSpaces: readonly UndergroundSpace[]
+  /** How many basement levels there are — the apparent-depth calculation needs it. */
+  readonly basementLevelCount: number
+  /** Total excavated depth in metres, positive. `0` with no basement. */
+  readonly totalDepthM: number
 }
 
 /**
@@ -196,6 +219,39 @@ const CONFLICT_DISTANCE_FACTOR = 1.85
  * *volume*, so the camera has to see three dimensions of it.
  */
 const CONFLICT_HEIGHT_FACTOR = 0.78
+
+/**
+ * How far back the underground view sits, as a multiple of the plan extent.
+ *
+ * A little closer than the parcel view and further than the floor view: the
+ * subject is one 3 m layer, but it has to be seen *with the datum above it and
+ * the tower above that*, or the picture says "here is a box" rather than "here
+ * is a box under a building".
+ */
+const UNDERGROUND_DISTANCE_FACTOR = 1.55
+
+/**
+ * And where the eye sits vertically, as a multiple of the plan extent — a small
+ * positive lift **above the datum**, not below it.
+ *
+ * This is the one number in the file most likely to be got wrong, so it is
+ * worth saying why it is not negative. The instinct is to put the camera
+ * underground to look at underground things. Do that and the ground plane fills
+ * the top of the frame, the tower disappears behind it, and the shot loses the
+ * relationship it exists to show. Keeping the eye just above the datum and
+ * *aiming* below it gives the view that actually reads: the building rising
+ * away, the datum as a line across the middle, and the basement volumes sitting
+ * under it. The audience sees `y > 0`, `y = 0` and `y < 0` in one frame.
+ */
+const UNDERGROUND_HEIGHT_FACTOR = 0.30
+
+/**
+ * How far below the datum the view aims, as a fraction of the apparent depth.
+ *
+ * Not the basement's centre — a touch above it, so the datum plane stays inside
+ * the frame rather than sitting on its upper edge.
+ */
+const UNDERGROUND_TARGET_FRACTION = 0.55
 
 /**
  * Compute the view for a preset.
@@ -367,6 +423,48 @@ export function getPresetView(
     }
 
     /**
+     * UNDERGROUND VIEW — the layer below the datum, with the datum in shot.
+     *
+     * Framed from the underground volumes' **own recorded bounds** rather than
+     * from the basement config, so the camera looks at what the register
+     * actually contains. Lifted by whatever the downward explosion has done to
+     * those levels, via the same `getExplodedApparentDepthM` the transform
+     * itself is built on — so the view follows the layer rather than the
+     * elevation the register records, exactly as the `floor` preset does above
+     * ground.
+     *
+     * Falls back to the building view when there is no basement, so — like
+     * `unit`, `floor` and `conflict` — the function stays total.
+     */
+    case 'underground': {
+      if (context.undergroundSpaces.length === 0) {
+        return getPresetView('building', context)
+      }
+
+      // What is on screen: the excavation plus however far the exploded view
+      // has pushed it down.
+      const apparentDepth = getExplodedApparentDepthM(
+        context.totalDepthM,
+        context.basementLevelCount,
+        explodeAmounts.floors,
+      )
+
+      // Aimed below the datum, at the layer — never at the building's waist.
+      const targetY = -apparentDepth * UNDERGROUND_TARGET_FRACTION
+
+      return {
+        position: [
+          centreX + extent * UNDERGROUND_DISTANCE_FACTOR,
+          // Above the datum, looking down across it. See the note on the
+          // constant for why this is positive.
+          extent * UNDERGROUND_HEIGHT_FACTOR,
+          centreZ + extent * UNDERGROUND_DISTANCE_FACTOR,
+        ],
+        target: [centreX, targetY, centreZ],
+      }
+    }
+
+    /**
      * BUILDING VIEW — the working view, and the default.
      *
      * The three-quarter view the scene has opened on since Phase 3. It is the
@@ -401,4 +499,9 @@ export const CAMERA_PRESETS: readonly { id: CameraPresetId; label: string }[] = 
   { id: 'top', label: 'Top' },
   { id: 'floor', label: 'Floor' },
   { id: 'unit', label: 'Unit' },
+  // Present in the group, unlike `conflict`, because a presenter chooses to
+  // look below the datum the same way they choose to look at the plan — and
+  // because the basement exists from the moment the cadastre is generated, so
+  // the button is never a control that only works during one staged moment.
+  { id: 'underground', label: 'Underground' },
 ]

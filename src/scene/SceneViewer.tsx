@@ -3,6 +3,8 @@ import { Canvas, type ThreeEvent } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
 
 import Building from './Building'
+import GroundDatum from './GroundDatum'
+import UndergroundSpaces from './UndergroundSpaces'
 import BuildingShell from './BuildingShell'
 import ConflictOverlay from './ConflictOverlay'
 import CameraRig, { type CameraRequest } from './CameraRig'
@@ -11,11 +13,35 @@ import FootprintPad from './FootprintPad'
 import Ground from './Ground'
 import SceneLabels from './SceneLabels'
 import type { FloorLayout } from './buildingConfig'
+import type { BasementLevelLayout } from './basementConfig'
 import type { GenerationVisuals } from '../animation/generationTimeline'
 import type { ExplodeAmounts, PlanPoint } from './explodedView'
 import type { BuildingFootprint, FootprintMetrics } from '../geometry/footprint'
 import type { ApartmentUnit } from './unitLayout'
 import type { ConflictFocus } from '../simulation/conflictPresentation'
+import type { UndergroundSpace } from '../underground/undergroundLayout'
+import {
+  getGroundPlaneOpacity,
+  type DatumEmphasis,
+} from '../underground/undergroundView'
+
+/**
+ * How far the camera may tip toward the horizon above ground.
+ *
+ * Just short of 90°, so it can never drop under the ground plane and look at
+ * the building through its own floor.
+ */
+const ABOVE_GROUND_POLAR_LIMIT = Math.PI / 2.05
+
+/**
+ * And in the underground view, where going below the horizon is the point.
+ *
+ * Short of a full nadir (π) for the same reason the top preset carries a two
+ * centimetre Z offset: an orbit controller pointed exactly along the axis has
+ * no unambiguous "up", and the singularity shows up as the view snapping
+ * through a rotation the moment the mouse moves.
+ */
+const UNDERGROUND_POLAR_LIMIT = Math.PI / 1.15
 
 /**
  * The 3D viewport.
@@ -164,6 +190,40 @@ interface SceneViewerProps {
   selectedUnit: ApartmentUnit | null
   /** Report a new selection upward. `null` clears it. */
   onSelectUnit: (unitId: string | null) => void
+
+  /* ── Below the ground datum ───────────────────────────────────────────── */
+
+  /** The generated underground spaces. Read, never written. */
+  undergroundSpaces: readonly UndergroundSpace[]
+  /**
+   * How strongly the above-ground building is drawn, and whether it is a target.
+   *
+   * Derived by `App` from one scalar via `underground/undergroundView.ts`, and
+   * distributed here rather than computed per mesh. Multiplies with floor
+   * isolation and conflict focus inside `Building`, so all their combinations
+   * are defined.
+   */
+  aboveGroundEmphasis: DatumEmphasis
+  /** The same, for the underground volumes. */
+  undergroundEmphasis: DatumEmphasis
+  /** How far the underground transition has arrived, `0`–`1`. */
+  undergroundAmount: number
+  /**
+   * The basement levels, for the exploded-stack labels.
+   *
+   * Passed straight through to `SceneLabels`, exactly as `floors` is: the
+   * viewer draws no basement label itself and holds no opinion about when one
+   * is warranted. Built by `App` from the basement configuration.
+   */
+  basementLevels: readonly BasementLevelLayout[]
+  /**
+   * Plan centre of each basement level, keyed by 1-based level.
+   *
+   * The below-ground counterpart of `floorPlanCentres`, measured once by `App`
+   * with the shared helper in `explodedView.ts` so both tiers explode about a
+   * centre computed the same way.
+   */
+  basementPlanCentres: ReadonlyMap<number, PlanPoint>
 }
 
 function SceneViewer({
@@ -187,6 +247,12 @@ function SceneViewer({
   selectedUnitId,
   selectedUnit,
   onSelectUnit,
+  undergroundSpaces,
+  aboveGroundEmphasis,
+  undergroundEmphasis,
+  undergroundAmount,
+  basementLevels,
+  basementPlanCentres,
 }: SceneViewerProps) {
   /**
    * The shadow box, measured from the footprint the scene is actually drawing.
@@ -308,7 +374,15 @@ function SceneViewer({
           readable sides instead of two lit ones and a black one. */}
       <directionalLight position={[-22, 14, -18]} intensity={0.5} />
 
-      <Ground />
+      {/* The ground plane thins as the underground view arrives, so the four
+          volumes below the datum become visible without the datum itself
+          disappearing from the picture. See `underground/undergroundView.ts`. */}
+      <Ground opacity={getGroundPlaneOpacity(undergroundAmount)} />
+
+      {/* The datum itself, drawn as a ring on the building's own footprint at
+          exactly y = 0. Present from the first frame — it is always true — and
+          brightening as the view that is about it arrives. */}
+      <GroundDatum footprint={footprint} undergroundAmount={undergroundAmount} />
 
       {/* THE PIPELINE, IN DRAW ORDER.
 
@@ -341,6 +415,7 @@ function SceneViewer({
         explodeAmounts={explodeAmounts}
         isolatedFloor={isolatedFloor}
         isolationAmount={isolationAmount}
+        undergroundAmount={undergroundAmount}
       />
 
       {/* 4. Each level divided into individually identified vertical property
@@ -358,6 +433,24 @@ function SceneViewer({
         conflictedUnitIds={conflictedUnitIds}
         conflictFocus={conflictFocus}
         conflictFocusAmount={conflictFocusAmount}
+        datumEmphasis={aboveGroundEmphasis}
+      />
+
+      {/* 4b. The same subdivision below the datum: one basement level cut into
+             four independently identified underground volumes. Drawn after the
+             units and before the conflict overlay, and in its own component
+             rather than as more entries in <Building> — an underground space is
+             a different record with a different identifier scheme, and a loop
+             that iterated both would have to ask which kind each one was on
+             every pass. */}
+      <UndergroundSpaces
+        spaces={undergroundSpaces}
+        selectedUnitId={selectedUnitId}
+        onSpaceClick={handleUnitClick}
+        emphasis={undergroundEmphasis}
+        revealed={visuals.isSettled}
+        explodeAmounts={explodeAmounts}
+        conflictedUnitIds={conflictedUnitIds}
       />
 
       {/* 5. When a conflict is staged: the canonical position it came from, how
@@ -379,6 +472,16 @@ function SceneViewer({
         floorPlanCentres={floorPlanCentres}
         isolatedFloor={isolatedFloor}
         isSettled={visuals.isSettled}
+        basementLevels={basementLevels}
+        basementPlanCentres={basementPlanCentres}
+        // Deliberately `null`, and the one thing on this component that is not
+        // yet wired end to end. The label reads `spaceCode` and `tier` off
+        // `scene/basementLayout`'s `UndergroundUnit`, while `App` still
+        // generates the older `underground/undergroundLayout` record, which has
+        // neither. Passing the level labels but not the selected volume is the
+        // honest partial state: it is a missing label, not a wrong one, and it
+        // disappears the moment the two record types are reconciled.
+        selectedUndergroundUnit={null}
       />
 
       {/* Mouse control: drag to orbit, scroll to zoom, right-drag to pan.
@@ -396,8 +499,22 @@ function SceneViewer({
         enableRotate
         minDistance={8}
         maxDistance={140}
-        // Stop the camera dropping below the ground plane.
-        maxPolarAngle={Math.PI / 2.05}
+        // How far the camera may tip toward — and past — the horizon.
+        //
+        // Above ground the limit stops the camera dropping under the ground
+        // plane, where the model would be seen through its own floor and the
+        // scene would read as broken. In the underground view that is exactly
+        // where the presenter needs to be able to go, so the limit relaxes as
+        // the mode arrives rather than being removed: `UNDERGROUND_POLAR_LIMIT`
+        // still stops the camera reaching a full nadir, where the orbit
+        // controller loses its unambiguous "up" and the view snaps.
+        //
+        // Interpolated rather than switched, so a presenter who is already
+        // orbiting when the mode changes is not jerked to a new limit.
+        maxPolarAngle={
+          ABOVE_GROUND_POLAR_LIMIT +
+          (UNDERGROUND_POLAR_LIMIT - ABOVE_GROUND_POLAR_LIMIT) * undergroundAmount
+        }
       />
 
       {/* Declared after OrbitControls so that `makeDefault` has published them

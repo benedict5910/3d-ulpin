@@ -1,5 +1,9 @@
 import { CAMERA_PRESETS, type CameraPresetId } from '../scene/cameraPresets'
 import { EXPLODED_VIEW_NOTE, type ExplodeMode } from '../scene/explodedView'
+import {
+  DATUM_LEGEND,
+  UNDERGROUND_VIEW_NOTE,
+} from '../underground/undergroundView'
 
 /**
  * The presentation controls: four camera presets and the explosion level.
@@ -107,6 +111,21 @@ interface ViewControlsProps {
    * is lost.
    */
   conflictFocusActive: boolean
+  /**
+   * Whether the presenter is looking below the ground datum.
+   *
+   * A toggle rather than a third member of the explosion group or a sixth floor
+   * button, because it is a different *kind* of setting: the explosion group
+   * chooses how far apart the layers are drawn and the floor group chooses
+   * which layer is in focus, while this chooses **which side of the datum the
+   * model is being read from**. Folding it into either would make one control
+   * answer two questions.
+   */
+  isUndergroundView: boolean
+  /** Enter or leave the underground view. */
+  onToggleUndergroundView: () => void
+  /** Whether the model has an underground layer at all. Gates the toggle. */
+  hasUnderground: boolean
 }
 
 function ViewControls({
@@ -120,6 +139,9 @@ function ViewControls({
   onSelectExplodeMode,
   isSettled,
   conflictFocusActive,
+  isUndergroundView,
+  onToggleUndergroundView,
+  hasUnderground,
 }: ViewControlsProps) {
   return (
     <div className="view-controls" role="group" aria-label="View controls">
@@ -219,6 +241,57 @@ function ViewControls({
           </button>
         ))}
       </div>
+
+      {/* Below the datum. Its own group, one button, sitting after the floor
+          isolation group because it is the widest-scoped of the three: floors
+          narrow the model, this changes which half of it you are reading.
+
+          Disabled rather than hidden when the model has no basement or has not
+          been generated, like every other unavailable control here, with the
+          reason in the tooltip. */}
+      <div
+        className="view-preset-group view-underground-group"
+        role="group"
+        aria-label="Ground datum"
+      >
+        <button
+          type="button"
+          className="view-preset view-preset-underground"
+          aria-pressed={isUndergroundView}
+          disabled={!isSettled || !hasUnderground}
+          title={
+            !isSettled
+              ? 'Available once the 3D cadastre is generated'
+              : !hasUnderground
+                ? 'This model has no underground layer'
+                : isUndergroundView
+                  ? 'Return to the above-ground view'
+                  : 'Look below the ground datum — the building ghosts back and the basement volumes come forward'
+          }
+          onClick={onToggleUndergroundView}
+        >
+          Underground
+        </button>
+      </div>
+
+      {/* The datum rule, shown while the underground view is active. Three
+          lines, because the point of the mode is the relationship between them
+          and a viewer should not have to infer it from box positions. Stated as
+          a constant in `underground/undergroundView.ts` so the mode and its
+          explanation cannot drift apart. */}
+      {isUndergroundView && isSettled && hasUnderground && (
+        <div className="view-datum-legend" role="note">
+          <ul className="datum-legend-list">
+            {DATUM_LEGEND.map((entry) => (
+              <li key={entry.label} className="datum-legend-row">
+                <span className="datum-legend-label">{entry.label}</span>
+                <span className="datum-legend-rule">{entry.rule}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="view-note">{UNDERGROUND_VIEW_NOTE}</p>
+        </div>
+      )}
 
       {/* The honesty line. It appears only while an explosion is active, and it
           says the one thing a cadastral audience must not be left to assume: the

@@ -5,6 +5,12 @@ import {
   type BuildingConfig,
 } from '../scene/buildingConfig'
 import type { ApartmentUnit } from '../scene/unitLayout'
+import {
+  getSpacesPerLevel,
+  getTotalDepthM,
+  type BasementConfig,
+} from '../underground/basementConfig'
+import type { UndergroundSpace } from '../underground/undergroundLayout'
 
 /**
  * A small read-out of the building and its property units, overlaid on the viewer.
@@ -27,6 +33,16 @@ import type { ApartmentUnit } from '../scene/unitLayout'
  * building block is fully known — it is source data plus config — but there are
  * no property units yet, and saying "20 units" while none exist would be the
  * panel claiming the workflow had run.
+ *
+ * THE TOTAL IS A SUM, NOT A NUMBER.
+ * `Total 3D spaces` is `units.length + undergroundSpaces.length`, computed in
+ * the render from the two arrays the scene is drawing. It is worth saying why
+ * that matters more than it looks: the moment a headline figure like "24" is
+ * typed anywhere, it becomes a claim the software makes about itself rather
+ * than a measurement of what it produced — and it stays 24 through the config
+ * change that makes it wrong. Every count in this panel is `.length` on
+ * generated data, so a second basement level or a 3 × 2 grid changes the
+ * numbers here with no edit to this file.
  */
 
 interface BuildingSummaryProps {
@@ -36,6 +52,10 @@ interface BuildingSummaryProps {
   footprintMetrics: FootprintMetrics
   /** The generated units, as rendered by the scene. */
   units: readonly ApartmentUnit[]
+  /** The basement's vertical description. */
+  basementConfig: BasementConfig
+  /** The generated underground spaces, as rendered by the scene. */
+  undergroundSpaces: readonly UndergroundSpace[]
   /** Whether the 3D cadastre has been generated. */
   isGenerated: boolean
 }
@@ -49,12 +69,19 @@ function BuildingSummary({
   config,
   footprintMetrics,
   units,
+  basementConfig,
+  undergroundSpaces,
   isGenerated,
 }: BuildingSummaryProps) {
   const totalHeight = getTotalHeight(config)
   const unitsPerFloor = getUnitsPerFloor(config)
   // Every unit is identical under a uniform grid, so the first one is representative.
   const sampleUnit = units[0]
+  const sampleSpace = undergroundSpaces[0]
+  const totalDepth = getTotalDepthM(basementConfig)
+  // Derived by addition from the two arrays the scene actually draws — see the
+  // note in this file's header for why it is a sum rather than a figure.
+  const totalSpaces = units.length + undergroundSpaces.length
 
   return (
     <aside className="building-summary" aria-label="Building summary">
@@ -127,14 +154,67 @@ function BuildingSummary({
         </p>
       )}
 
+      {/* Below the ground datum. A section of its own rather than more rows in
+          the one above, because "how many storeys" and "how deep" are different
+          sanctions and a reader scanning for one should not have to filter the
+          other out of a single list. */}
+      <h2 className="summary-title summary-title-secondary">Underground</h2>
+      {isGenerated && sampleSpace ? (
+        <dl className="summary-list">
+          <div className="summary-row">
+            <dt>Basement levels</dt>
+            <dd>{basementConfig.numberOfLevels}</dd>
+          </div>
+          <div className="summary-row">
+            <dt>Excavated depth</dt>
+            <dd>{totalDepth.toFixed(1)} m</dd>
+          </div>
+          <div className="summary-row">
+            <dt>Elevation</dt>
+            {/* Read off the deepest and shallowest generated spaces rather than
+                from the config: the panel reports the interval the *record*
+                occupies, so a generator that disagreed with its own config
+                would be visible here instead of papered over. */}
+            <dd>
+              {Math.min(...undergroundSpaces.map((space) => space.yMin)).toFixed(1)}{' '}
+              &rarr;{' '}
+              {Math.max(...undergroundSpaces.map((space) => space.yMax)).toFixed(1)} m
+            </dd>
+          </div>
+          <div className="summary-row">
+            <dt>Underground spaces</dt>
+            <dd>{undergroundSpaces.length}</dd>
+          </div>
+          <div className="summary-row">
+            <dt>Spaces per level</dt>
+            <dd>
+              {getSpacesPerLevel(basementConfig)} ({basementConfig.spaceColumns}{' '}
+              &times; {basementConfig.spaceRows})
+            </dd>
+          </div>
+          <div className="summary-row summary-row-total">
+            <dt>Total 3D spaces</dt>
+            <dd>
+              {totalSpaces} ({units.length} above &middot; {undergroundSpaces.length}{' '}
+              below)
+            </dd>
+          </div>
+        </dl>
+      ) : (
+        <p className="summary-pending">
+          Not generated. {undergroundSpaces.length} underground space(s) will be cut
+          beneath this footprint.
+        </p>
+      )}
+
       {/* The rectangular assumption, stated where the subdivision is described
           rather than buried in a comment. It is a real limitation of the
           prototype and the interface says so. */}
       {isGenerated && (
         <p className="summary-note" role="note">
           {footprintMetrics.isAxisAlignedRectangle
-            ? 'Prototype: units are cut on a rectangular grid over the footprint’s bounding box.'
-            : 'Warning: this footprint is not rectangular, so the prototype grid overhangs the plan.'}
+            ? 'Prototype: units and underground spaces are cut on a rectangular grid over the footprint’s bounding box.'
+            : 'Warning: this footprint is not rectangular, so the prototype grid overhangs the plan above and below ground.'}
         </p>
       )}
     </aside>

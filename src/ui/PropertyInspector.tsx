@@ -1,13 +1,23 @@
-import { getUnitCenter, type ApartmentUnit } from '../scene/unitLayout'
 import OwnershipHierarchy from './OwnershipHierarchy'
+import type { SpaceRecord } from './spaceRecord'
 
 /**
  * The property inspector: the cadastral record of whichever unit is selected.
  *
  * This panel is ordinary HTML sitting on top of the WebGL canvas — not a 3D
  * object, not a texture, not a label in the scene. It knows nothing about
- * Three.js, meshes, rays or cameras. It receives one `ApartmentUnit` (or
- * `null`) and renders it.
+ * Three.js, meshes, rays or cameras. It receives one `SpaceRecord` (or `null`)
+ * and renders it.
+ *
+ * ONE INSPECTOR FOR BOTH SIDES OF THE GROUND DATUM.
+ * An apartment on floor 3 and a parking bay in basement 1 are shown by this
+ * component, in this layout, with these rows. There is no underground
+ * inspector, no second panel and no branch inside this one — the two kinds of
+ * record are flattened into a `SpaceRecord` by `ui/spaceRecord.ts` before they
+ * arrive, so a person reads one register rather than two, and a row added here
+ * cannot be forgotten on one side. The only thing an underground record
+ * changes is the heading and the badge that says which side of the datum the
+ * volume is on; every figure below them is produced by the same code.
  *
  * Every value below is read off that object or derived from its bounds. There
  * are no literals here for area, volume, elevation or extent — if the building
@@ -16,7 +26,7 @@ import OwnershipHierarchy from './OwnershipHierarchy'
  * of the same unit that someone has to remember to keep in step.
  *
  * WHICH GEOMETRY IT SHOWS
- * The unit handed to this panel is a **display unit** — canonical, or canonical
+ * The record handed to this panel is a **display record** — canonical, or canonical
  * with a simulated conflict override applied (see
  * `simulation/conflictSimulation.ts`). That is correct and deliberate: a
  * simulated encroachment is a hypothetical *record*, so the record panel should
@@ -28,7 +38,7 @@ import OwnershipHierarchy from './OwnershipHierarchy'
  */
 
 const EMPTY_MESSAGE =
-  'Select a property unit in the 3D model to inspect its spatial record.'
+  'Select a property unit or underground space in the 3D model to inspect its spatial record.'
 
 /** One length in metres, at the precision a cadastral read-out wants. */
 function metres(value: number): string {
@@ -41,19 +51,41 @@ function span(min: number, max: number): string {
 }
 
 /**
- * The filled-in record for one unit.
+ * The filled-in record for one 3D space.
  *
- * Split out from the panel so that `unit` is non-nullable throughout: the
+ * Split out from the panel so that `record` is non-nullable throughout: the
  * "nothing selected" case is handled once, by the parent, instead of guarding
  * every field.
  */
-function UnitRecord({ unit, isConflicted }: { unit: ApartmentUnit; isConflicted: boolean }) {
-  // Derived from the bounds by the same function the renderer uses to place the
-  // mesh, so the point named here is exactly the point the box is centred on.
-  const [centroidX, centroidY, centroidZ] = getUnitCenter(unit)
+function UnitRecord({
+  record,
+  isConflicted,
+}: {
+  record: SpaceRecord
+  isConflicted: boolean
+}) {
+  // Carried on the record, derived by the same function the renderer uses to
+  // place the mesh, so the point named here is exactly the point the box is
+  // centred on.
+  const [centroidX, centroidY, centroidZ] = record.centroid
 
   return (
     <>
+      {/* WHICH SIDE OF THE DATUM. Stated before anything else, because it is
+          the fact that reframes every number underneath it: an elevation of
+          −3.0 → 0.0 m is a mistake in a building and a correct basement, and
+          the reader needs to know which they are looking at before they read
+          it. Taken from the record's own marker rather than from the sign of an
+          elevation — see `ui/spaceRecord.ts`. */}
+      {record.isUnderground && (
+        <p className="inspector-underground">
+          <span className="inspector-underground-glyph" aria-hidden="true">
+            ▼
+          </span>
+          Underground property / space — below the ground datum
+        </p>
+      )}
+
       {/* The dispute badge, when the validation engine has flagged this unit.
           It sits *above* the record and **replaces nothing**: a contested
           property still has an identifier, an area, a volume and an elevation,
@@ -74,7 +106,7 @@ function UnitRecord({ unit, isConflicted }: { unit: ApartmentUnit; isConflicted:
           card used to, and it earns more of it — the identifier laid out as the
           foot of a descent reads as a *derivation* rather than a reference
           number. See `OwnershipHierarchy.tsx`. */}
-      <OwnershipHierarchy unit={unit} />
+      <OwnershipHierarchy record={record} />
 
       {/* The validation status of this one volume, immediately under the chain
           that names it. Two words when there is nothing wrong: the default state
@@ -94,23 +126,24 @@ function UnitRecord({ unit, isConflicted }: { unit: ApartmentUnit; isConflicted:
             deliberately not repeated here — one fact, one place on the panel. */}
         <div className="summary-row">
           <dt>Property type</dt>
-          <dd>{unit.propertyType}</dd>
+          <dd>{record.propertyType}</dd>
         </div>
         <div className="summary-row">
           <dt>Area</dt>
-          <dd>{unit.areaSqM.toFixed(0)} m&sup2;</dd>
+          <dd>{record.areaSqM.toFixed(0)} m&sup2;</dd>
         </div>
         <div className="summary-row">
           <dt>Volume</dt>
-          <dd>{unit.volumeCubicM.toFixed(0)} m&sup3;</dd>
+          <dd>{record.volumeCubicM.toFixed(0)} m&sup3;</dd>
         </div>
         <div className="summary-row">
           <dt>Elevation</dt>
           {/* The vertical extent is what makes this a *3D* property record:
               the same footprint at 6–9 m is a different property from the one
-              at 9–12 m. */}
+              at 9–12 m — and the same footprint at −3–0 m is a third property
+              again, which is the whole argument for the underground layer. */}
           <dd>
-            {metres(unit.yMin)} &ndash; {metres(unit.yMax)}
+            {metres(record.yMin)} &ndash; {metres(record.yMax)}
           </dd>
         </div>
       </dl>
@@ -119,15 +152,15 @@ function UnitRecord({ unit, isConflicted }: { unit: ApartmentUnit; isConflicted:
       <dl className="summary-list">
         <div className="summary-row">
           <dt>X</dt>
-          <dd>{span(unit.xMin, unit.xMax)}</dd>
+          <dd>{span(record.xMin, record.xMax)}</dd>
         </div>
         <div className="summary-row">
           <dt>Y</dt>
-          <dd>{span(unit.yMin, unit.yMax)}</dd>
+          <dd>{span(record.yMin, record.yMax)}</dd>
         </div>
         <div className="summary-row">
           <dt>Z</dt>
-          <dd>{span(unit.zMin, unit.zMax)}</dd>
+          <dd>{span(record.zMin, record.zMax)}</dd>
         </div>
       </dl>
 
@@ -151,19 +184,20 @@ function UnitRecord({ unit, isConflicted }: { unit: ApartmentUnit; isConflicted:
 }
 
 interface PropertyInspectorProps {
-  /** The selected unit, or `null` when nothing is selected. */
-  unit: ApartmentUnit | null
+  /** The selected space's record, or `null` when nothing is selected. */
+  record: SpaceRecord | null
   /**
-   * Whether the validation engine has flagged this unit.
+   * Whether the validation engine has flagged this volume.
    *
    * Passed in rather than derived: the inspector does not decide what a conflict
    * is, and this is the same `conflictedUnitIds` list the 3D scene colours from,
-   * so a red box and a badged record can never disagree.
+   * so a red box and a badged record can never disagree. It covers both sides
+   * of the datum, because the engine's finding does.
    */
   isConflicted?: boolean
 }
 
-function PropertyInspector({ unit, isConflicted = false }: PropertyInspectorProps) {
+function PropertyInspector({ record, isConflicted = false }: PropertyInspectorProps) {
   return (
     // aria-live: screen readers announce the record when the selection changes.
     <aside
@@ -171,12 +205,16 @@ function PropertyInspector({ unit, isConflicted = false }: PropertyInspectorProp
       aria-label="Property inspector"
       aria-live="polite"
     >
-      <h2 className="summary-title">Property Unit</h2>
+      {/* The heading names what is selected rather than what the panel is: a
+          reader who has clicked a parking bay should not be told they are
+          looking at a "Property Unit". Carried on the record so the wording is
+          decided once, beside the rest of the record's shape. */}
+      <h2 className="summary-title">{record?.title ?? 'Property Unit'}</h2>
 
-      {unit === null ? (
+      {record === null ? (
         <p className="inspector-empty">{EMPTY_MESSAGE}</p>
       ) : (
-        <UnitRecord unit={unit} isConflicted={isConflicted} />
+        <UnitRecord record={record} isConflicted={isConflicted} />
       )}
     </aside>
   )

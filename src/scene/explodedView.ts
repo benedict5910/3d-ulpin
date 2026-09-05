@@ -221,6 +221,126 @@ export function getExplodedOffsetM(floorIndex: number, amount: number): number {
 }
 
 /**
+ * The **downward** display offset for one basement level, in metres. Negative.
+ *
+ *   getBasementExplodedOffsetM(0, 1) === -3.2
+ *
+ * The mirror of `getExplodedOffsetM`, and the whole of "the stack separates in
+ * both directions". Two details are deliberate:
+ *
+ *   · **The sign is negative.** Above ground the floors rise away from the
+ *     datum; below it they must sink away from it. One transform that changed
+ *     direction based on a stored elevation would make the separation a
+ *     consequence of the geometry it is displaying.
+ *
+ *   · **`basementIndex + 1`, not `basementIndex`.** The ground floor has index
+ *     0 and does not move, which is correct: it is the layer everything else
+ *     separates *from*. Basement 1 also has index 0 in its own stack, and if it
+ *     used the same formula it would not move either — the ground floor and the
+ *     basement would stay welded together at the datum and the exploded view
+ *     would show a five-layer stack with a lump on the bottom. Offsetting by one
+ *     opens the first gap at the datum, which is the one gap the whole
+ *     underground argument is about.
+ *
+ * VISUALISATION ONLY. The canonical basement elevation stays −3.0 → 0.0 m
+ * whatever this returns; see the header of this file and ARCHITECTURE §10.0.
+ *
+ * @param basementIndex 0-based index in the downward stack. Basement 1 is 0.
+ * @param amount `0` (stacked) to `1` (fully separated).
+ */
+export function getBasementExplodedOffsetM(
+  basementIndex: number,
+  amount: number,
+): number {
+  return -(basementIndex + 1) * EXPLODED_FLOOR_GAP_M * amount
+}
+
+/**
+ * The plan centre of every basement level, keyed by 1-based level.
+ *
+ * The below-ground twin of `buildFloorPlanCentres`, and deliberately the same
+ * three lines rather than a variant of them: both group by the layer a volume
+ * belongs to and hand each group to `getPlanCentre`. Keeping them as two thin
+ * functions over one shared measurement is what stops "the centre of a layer"
+ * being computed two different ways on the two sides of the datum.
+ *
+ * Generic over anything carrying a horizontal extent and a basement level, so
+ * this module still knows nothing about the cadastral model.
+ */
+export function buildBasementPlanCentres<
+  T extends HorizontalExtent & { readonly basementLevel: number },
+>(items: readonly T[]): Map<number, PlanPoint> {
+  const byLevel = new Map<number, T[]>()
+
+  for (const item of items) {
+    const existing = byLevel.get(item.basementLevel)
+    if (existing === undefined) {
+      byLevel.set(item.basementLevel, [item])
+    } else {
+      existing.push(item)
+    }
+  }
+
+  const centres = new Map<number, PlanPoint>()
+  for (const [basementLevel, levelItems] of byLevel) {
+    centres.set(basementLevel, getPlanCentre(levelItems))
+  }
+  return centres
+}
+
+/**
+ * **The single display offset for one underground volume.** Metres, `[x, y, z]`.
+ *
+ * The exact mirror of `getUnitDisplayOffsetM`, and the same argument shape for
+ * the same reason: the volume's mesh, its selection outline and its label all
+ * need this value and must agree to the millimetre. One function called from
+ * three places is the only arrangement in which they cannot disagree.
+ *
+ * Both separations apply below the datum as they do above it. The level
+ * separation sinks the volume away from the ground datum
+ * (`getBasementExplodedOffsetM`, negative); the unit separation pushes it
+ * outward from **its own level's** plan centre, using the same normalised
+ * direction and the same distance an apartment gets. A cadastre that showed the
+ * strata opening above ground and staying welded below it would be making a
+ * claim about subsurface property it does not mean: a parking bay is a
+ * separately owned volume in exactly the way a flat is, and the second level of
+ * the explosion is the moment that is shown.
+ *
+ * @param space the volume's horizontal bounds and 1-based basement level.
+ * @param levelCentre the plan centre of that volume's basement level.
+ */
+export function getUndergroundDisplayOffsetM(
+  space: HorizontalExtent & { readonly basementLevel: number },
+  levelCentre: PlanPoint,
+  amounts: ExplodeAmounts,
+): [number, number, number] {
+  const plan = getUnitPlanOffsetM(space, levelCentre, amounts.units)
+  return [
+    plan.x,
+    getBasementExplodedOffsetM(space.basementLevel - 1, amounts.floors),
+    plan.z,
+  ]
+}
+
+/**
+ * How deep the model *appears* at a given explosion amount, in metres.
+ *
+ * Positive, like `getTotalDepthM`: it is a magnitude the camera framing needs,
+ * not an elevation. The counterpart of `getExplodedApparentHeightM`, and used
+ * by exactly the same kind of caller for exactly the same reason — a preset has
+ * to frame what is on screen, and an exploded basement is further down than the
+ * register says it is.
+ */
+export function getExplodedApparentDepthM(
+  totalDepthM: number,
+  levelCount: number,
+  amount: number,
+): number {
+  if (levelCount <= 0) return 0
+  return totalDepthM + Math.abs(getBasementExplodedOffsetM(levelCount - 1, amount))
+}
+
+/**
  * The outward display offset for one unit within its floor, in metres.
  *
  * The direction is derived from the unit's position on its floor and then

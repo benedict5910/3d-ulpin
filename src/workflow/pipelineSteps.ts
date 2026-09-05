@@ -99,8 +99,20 @@ export interface PipelineInput {
   readonly floorCount: number
   /** Total height of the structure, in metres. */
   readonly totalHeightM: number
-  /** How many vertical property units the model contains. */
+  /** How many **above-ground** vertical property units the model contains. */
   readonly unitCount: number
+  /**
+   * How many **below-ground** volumes the model contains. `0` for no basement.
+   *
+   * A separate figure rather than a pre-summed total, because the pipeline has to
+   * be able to say both — "24 property volumes" is the result, and "20 above
+   * ground, 4 below" is the evidence that the result covers both tiers. The sum
+   * is computed where it is displayed, from these two, so the row cannot report a
+   * total that neither array supports.
+   */
+  readonly undergroundCount: number
+  /** How deep the excavation goes below the ground datum, in metres. Positive. */
+  readonly basementDepthM: number
   /**
    * The topology engine's verdict, or `null` before generation.
    *
@@ -142,6 +154,10 @@ export function buildPipelineSteps(input: PipelineInput): PipelineStep[] {
       ? 'active'
       : 'pending'
 
+  /** The whole record, derived here from the two tier counts. */
+  const totalSpaces = input.unitCount + input.undergroundCount
+  const hasBasement = input.undergroundCount > 0
+
   return [
     {
       id: 'parcel',
@@ -164,21 +180,32 @@ export function buildPipelineSteps(input: PipelineInput): PipelineStep[] {
       state: structureState,
       detail:
         structureState === 'complete'
-          ? `${input.floorCount} floors · ${input.totalHeightM.toFixed(0)} m`
+          ? // The vertical extent of the structure, both ways from the datum. A
+            // "15 m" that quietly omitted three metres of excavation would be the
+            // pipeline describing half the model it had just built.
+            hasBasement
+              ? `${input.floorCount} floors · ${input.totalHeightM.toFixed(0)} m up · ${input.basementDepthM.toFixed(0)} m down`
+              : `${input.floorCount} floors · ${input.totalHeightM.toFixed(0)} m`
           : structureState === 'active'
             ? `extruding to ${input.totalHeightM.toFixed(0)} m`
             : `extrude footprint to ${input.totalHeightM.toFixed(0)} m`,
     },
     {
+      // Still one step, not two. The volumes above and below the datum are
+      // produced by two generators over one footprint in one pass, and splitting
+      // them into two pipeline rows would be a nicer list and a false account of
+      // the code — the same argument that keeps units and identifiers together.
       id: 'units',
-      label: 'Vertical Units Created',
+      label: 'Property Volumes Created',
       state: unitsState,
       detail:
         unitsState === 'complete'
-          ? `${input.unitCount} property units`
+          ? hasBasement
+            ? `${input.unitCount} above ground · ${input.undergroundCount} below · ${totalSpaces} total`
+            : `${totalSpaces} property units`
           : unitsState === 'active'
-            ? `cutting ${input.unitCount} units`
-            : `${input.unitCount} units pending`,
+            ? `cutting ${totalSpaces} volumes`
+            : `${totalSpaces} volumes pending`,
     },
     {
       id: 'ulpin',
@@ -186,8 +213,8 @@ export function buildPipelineSteps(input: PipelineInput): PipelineStep[] {
       state: unitsState,
       detail:
         unitsState === 'complete'
-          ? `${input.unitCount} identifiers, all unique`
-          : 'one identifier per unit',
+          ? `${totalSpaces} identifiers, all unique`
+          : 'one identifier per volume',
     },
     {
       id: 'topology',

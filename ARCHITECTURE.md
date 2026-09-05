@@ -3086,6 +3086,83 @@ revision — Subphase G moves markup and CSS only.
 
 ---
 
+### 10.8 Subphase H — the ground datum and below-ground volumes
+
+Everything before this subphase lived above `y = 0`, so `y = 0` was merely where
+the building started. The moment volumes exist on both sides it becomes a
+**boundary with a meaning**, and four genuinely new concepts follow. Only these
+four are new; everything else in the subphase is an application of §10.0's rule.
+
+**1. The ground datum is a stated constant, not a literal zero.**
+`GROUND_DATUM_Y` lives in `underground/basementConfig.ts` and every rule
+compares against it. Three sentences the interface must let an audience read off
+the screen without being told:
+
+```
+above ground   y > 0
+ground datum   y = 0
+underground    y < 0
+```
+
+It is *drawn* as well as stated — a ring on the building's own footprint at
+exactly `y = 0` (`scene/GroundDatum.tsx`) — because a boundary that matters and
+is invisible is a boundary an audience has to take on trust.
+
+**2. Touching the datum is valid; crossing it is not.**
+
+```
+basement ceiling  y = 0   ┐ share a SURFACE, not a volume  → VALID
+ground-floor slab y = 0   ┘ overlap extent on Y is exactly 0
+
+basement ceiling  y = +0.1 ┐ genuinely interpenetrate      → CONFLICT
+ground-floor slab y =  0   ┘
+```
+
+Nothing new enforces this: it falls straight out of `getVolumeIntersection`,
+which already required **all three** axis extents to exceed the epsilon before
+reporting an intersection. The subphase's contribution is to point that test at
+the cross-datum pairs and to check the rule *from both sides* — the underground
+self-check builds a basement raised 0.1 m and asserts the validator catches it.
+A validator that only ever sees valid models cannot be distinguished from one
+that returns "valid".
+
+**3. Two record types, one selection and one inspector.**
+`UndergroundSpace` is deliberately **not** an `ApartmentUnit`: four consumers
+read `floorLevel` as "1-based floor in the upward stack" (the ULPIN encoder,
+floor isolation, the exploded offset, the conflict simulation), and a record
+whose `floorLevel` meant "basement 1" would make every one of them silently
+wrong. Identifiers separate the same way — `B01-U02`, not a negative floor — so
+a collision across the datum is impossible by construction rather than merely
+unlikely.
+
+What is *not* duplicated is the reading of them. `App` still holds one
+`selectedUnitId: string | null`; `ui/spaceRecord.ts` flattens whichever record
+it names into a `SpaceRecord`, and `PropertyInspector` renders that with no
+branch in it. There is one register, one panel, and no way for two panels to
+drift.
+
+```
+ApartmentUnit ────┐
+                  ├──► SpaceRecord ──► PropertyInspector + OwnershipHierarchy
+UndergroundSpace ─┘     (chain, bounds, centroid, isUnderground)
+```
+
+**4. The datum-side priority rule.**
+Floor isolation states "while a floor is isolated, only that floor is a target".
+The underground view states the same kind of rule on the other axis: **the side
+of the datum you are looking at is the side you can select on.** Without it a
+ray cast at a thinned ground plane would pass through and select a volume the
+presenter cannot see. Like isolation's rule it is a decision, not a fade —
+interactivity switches when the mode is entered rather than tracking the opacity
+ramp.
+
+The visualisation obeys §10.0 unchanged. `getUndergroundExplodedOffsetM` is a
+display transform that returns a **negative** offset (`basementIndex + 1`, so
+the first gap opens at the datum rather than welding the basement to the ground
+floor), the canonical interval stays −3.0 → 0.0 m at every explosion amount, and
+the underground emphasis multiplies with floor isolation and conflict focus
+rather than overriding either — so all their combinations remain defined.
+
 ## 11. Repository shape
 
 ### As built (Phases 1–10 — this exists now)

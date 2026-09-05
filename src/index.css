@@ -1753,3 +1753,115 @@ body {
     border-top: 1px solid var(--border);
   }
 }
+
+/* ── Underground phase: below the ground datum ───────────────────────────── */
+
+/* The datum badge in the property inspector.
+   Deliberately the same *shape* as `.inspector-conflict` — the same padding,
+   the same 3 px left rule, the same uppercase micro-caps — and a different
+   colour. Both are one-line statements that reframe the record underneath
+   them, so they should read as the same kind of thing; what differs is that a
+   conflict is a fault and being underground is simply a fact, so this one is
+   the warm datum amber rather than the conflict red. Reusing the conflict
+   colour here would make a correct basement look like a problem. */
+.inspector-underground {
+  margin: 0 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 11px;
+  border: 1px solid rgba(232, 181, 99, 0.5);
+  border-left: 3px solid #e8b563;
+  border-radius: 6px;
+  background: rgba(232, 181, 99, 0.12);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #e8b563;
+}
+
+.inspector-underground-glyph {
+  font-size: 0.75rem;
+  line-height: 1;
+}
+
+/* The totals row in the building summary: `Total 3D spaces`.
+   Ruled off above and set in the body colour rather than the muted one,
+   because it is the sum of the two sections it follows rather than another
+   member of the list. */
+.summary-row-total {
+  margin-top: 4px;
+  padding-top: 7px;
+  border-top: 1px solid var(--border);
+}
+
+.summary-row-total dt,
+.summary-row-total dd {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* The underground toggle. Its own group of one, so it keeps the pill language
+   of the preset and explosion groups while sitting visibly apart from them —
+   it changes which half of the model is being read, not how the model is
+   arranged, and grouping it with either would say otherwise. */
+.view-underground-group {
+  align-self: flex-end;
+}
+
+.view-preset-underground[aria-pressed='true'] {
+  color: #f0c98a;
+  background: rgba(232, 181, 99, 0.16);
+}
+
+/* The three-line datum rule, shown only while the underground view is active.
+   A table of label-and-rule pairs rather than a sentence: the whole point of
+   the mode is a relationship between three elevations, and three aligned rows
+   state it in a way a paragraph cannot. */
+.view-datum-legend {
+  display: grid;
+  gap: 6px;
+  max-width: 232px;
+  padding: 8px 10px;
+  border: 1px solid rgba(232, 181, 99, 0.32);
+  border-radius: 8px;
+  background: var(--panel);
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+}
+
+.datum-legend-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 3px;
+}
+
+.datum-legend-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  font-size: 0.6875rem;
+  color: var(--muted);
+}
+
+.datum-legend-label {
+  letter-spacing: 0.04em;
+}
+
+/* The rule itself in the identifier face: `y > 0`, `y = 0`, `y < 0` are
+   arithmetic, and setting them in the monospace the ULPIN uses says so. */
+.datum-legend-rule {
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+  color: #e8b563;
+}
+
+.view-datum-legend .view-note {
+  max-width: none;
+  text-align: left;
+}

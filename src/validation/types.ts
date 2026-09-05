@@ -38,6 +38,34 @@ export type ValidationCategory =
   | 'ownership-overlap'
   /** Does the generated structure match what the configuration asks for? */
   | 'structure-count'
+  /**
+   * Do the basement levels stack below the ground datum, with every
+   * underground volume inside the footprint and inside its own level?
+   */
+  | 'underground-containment'
+  /**
+   * Do any two underground volumes intersect, and does any underground volume
+   * interpenetrate an above-ground one?
+   *
+   * A separate category from `ownership-overlap` rather than more results
+   * inside it, because the two answer different questions and a presenter needs
+   * them told apart: one is a dispute *within* a layer, the other is a dispute
+   * that only exists because the model has a third axis at all.
+   */
+  | 'underground-overlap'
+  /**
+   * Does the underground record meet the surface without crossing it?
+   *
+   * The datum is the one plane where the two tiers touch, and touching is the
+   * correct relationship: a basement ceiling at `y = 0` and a ground-floor slab
+   * at `y = 0` share a plane and no volume. Interpenetration — subsurface
+   * rights claiming surface space — is the fault, and it is a different finding
+   * from two basement volumes disputing each other, so it is a different
+   * category rather than more `underground-overlap` results.
+   */
+  | 'surface-adjacency'
+  /** Does every 3D space — above and below ground — belong to one parcel? */
+  | 'parcel-consistency'
 
 /**
  * How a single check came out.

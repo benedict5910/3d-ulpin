@@ -1,14 +1,21 @@
 import { Html } from '@react-three/drei'
 
 import type { FloorLayout } from './buildingConfig'
+import type { BasementLevelLayout } from './basementConfig'
 import {
+  getBasementExplodedOffsetM,
   getFloorDisplayOffsetM,
+  getUndergroundDisplayOffsetM,
   getUnitDisplayOffsetM,
   type ExplodeAmounts,
   type PlanPoint,
 } from './explodedView'
 import type { FootprintMetrics } from '../geometry/footprint'
 import { getUnitCenter, type ApartmentUnit } from './unitLayout'
+import {
+  getUndergroundUnitCentre,
+  type UndergroundUnit,
+} from './basementLayout'
 
 /**
  * 3D labels — deliberately, restrictively few.
@@ -90,6 +97,34 @@ interface SceneLabelsProps {
   isolatedFloor: number | null
   /** Whether the building has settled. No labels during the transition. */
   isSettled: boolean
+
+  /* ── Below ground (Phase 11) ─────────────────────────────────────────────── */
+
+  /**
+   * The basement levels, for the exploded-stack labels.
+   *
+   * They obey the same rule as the floor labels and for the same reason: a
+   * basement level is labelled **only when the stack is separated**, because
+   * that is the one moment a strip of boxes below the datum is ambiguous. Stacked,
+   * it is obviously the level under the ground floor and `B1` would be noise.
+   *
+   * The pay-off is the exploded view's ladder reading top to bottom as
+   * `F5 F4 F3 F2 F1` — the datum — `B1`, which is the full vertical stack with
+   * its own legend.
+   */
+  basementLevels: readonly BasementLevelLayout[]
+  /**
+   * The selected **below-ground** volume, or `null`.
+   *
+   * A separate prop from `selectedUnit` rather than a union, because the label
+   * reads a different pair of fields (`spaceCode` and `basementLevel`) and rides
+   * on a different offset function. At most one of the two is ever non-null —
+   * there is one selection — so the two blocks below are mutually exclusive in
+   * practice without needing to say so.
+   */
+  selectedUndergroundUnit: UndergroundUnit | null
+  /** Plan centre of each basement level, keyed by 1-based level. */
+  basementPlanCentres: ReadonlyMap<number, PlanPoint>
 }
 
 function SceneLabels({
@@ -100,6 +135,9 @@ function SceneLabels({
   floorPlanCentres,
   isolatedFloor,
   isSettled,
+  basementLevels,
+  selectedUndergroundUnit,
+  basementPlanCentres,
 }: SceneLabelsProps) {
   // Labels on a building that is still assembling itself would name things
   // before they exist. They wait.
@@ -124,6 +162,18 @@ function SceneLabels({
       : getUnitDisplayOffsetM(
           selectedUnit,
           floorPlanCentres.get(selectedUnit.floorLevel) ?? ORIGIN,
+          explodeAmounts,
+        )
+
+  // And the below-ground selection rides on its own — the same call
+  // `Basement.tsx` places the mesh with, so the label cannot end up over where
+  // the volume would have been.
+  const undergroundOffset =
+    selectedUndergroundUnit === null
+      ? ([0, 0, 0] as const)
+      : getUndergroundDisplayOffsetM(
+          selectedUndergroundUnit,
+          basementPlanCentres.get(selectedUndergroundUnit.basementLevel) ?? ORIGIN,
           explodeAmounts,
         )
 
@@ -161,6 +211,32 @@ function SceneLabels({
           </Html>
         ))}
 
+      {/* Basement levels, on the same west line as the floors so the whole stack
+          reads as one column of labels through the datum rather than two lists
+          that happen to be near each other. */}
+      {explodedEnough &&
+        basementLevels.map((level) => (
+          <Html
+            key={`b${level.level}`}
+            position={[
+              labelX,
+              level.centerY + getBasementExplodedOffsetM(level.index, explodeAmounts.floors),
+              footprintMetrics.centroid.z,
+            ]}
+            center
+            distanceFactor={LABEL_DISTANCE_FACTOR}
+            zIndexRange={[8, 0]}
+            style={{ pointerEvents: 'none' }}
+          >
+            <span
+              className="scene-label scene-label-floor scene-label-basement"
+              style={{ opacity: Math.min(1, explodeAmounts.floors * 1.6) }}
+            >
+              B{level.level}
+            </span>
+          </Html>
+        ))}
+
       {selectedUnit && (
         <Html
           position={[
@@ -176,6 +252,29 @@ function SceneLabels({
           <span className="scene-label scene-label-unit">
             {selectedUnit.unitNumber}
             <span className="scene-label-sub">F{selectedUnit.floorLevel}</span>
+          </span>
+        </Html>
+      )}
+
+      {selectedUndergroundUnit && (
+        <Html
+          position={[
+            getUndergroundUnitCentre(selectedUndergroundUnit)[0] + undergroundOffset[0],
+            // Above the volume's own ceiling, exactly as the apartment label sits
+            // above its unit's. For an unexploded basement that puts it at the
+            // ground datum, which is where a marker for a below-ground space
+            // belongs: on the surface above it, like a manhole cover.
+            selectedUndergroundUnit.yMax + UNIT_LABEL_LIFT_M + undergroundOffset[1],
+            getUndergroundUnitCentre(selectedUndergroundUnit)[2] + undergroundOffset[2],
+          ]}
+          center
+          distanceFactor={LABEL_DISTANCE_FACTOR}
+          zIndexRange={[9, 0]}
+          style={{ pointerEvents: 'none' }}
+        >
+          <span className="scene-label scene-label-unit scene-label-space">
+            {selectedUndergroundUnit.spaceCode}
+            <span className="scene-label-sub">B{selectedUndergroundUnit.basementLevel}</span>
           </span>
         </Html>
       )}

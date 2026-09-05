@@ -48,6 +48,22 @@ import {
   type TopologyReport,
   type ValidationResult,
 } from './types'
+import {
+  checkUnderground,
+  type ValidatableBasementLevel,
+  type ValidatableUndergroundUnit,
+} from './undergroundRules'
+
+/**
+ * The below-ground validatable contracts, re-exported from the one module every
+ * caller of the engine already imports.
+ *
+ * The rules that use them live in `undergroundRules.ts`, but nothing outside
+ * this folder should have to know which file a given rule ended up in: a caller
+ * assembling a `TopologyInput` names `validateTopology` and gets the types that
+ * input is made of, exactly as it does for `ValidatableUnit` below.
+ */
+export type { ValidatableBasementLevel, ValidatableUndergroundUnit }
 
 /** The minimum a unit must expose to be validated. Structural, not imported. */
 export interface ValidatableUnit extends Box3D {
@@ -55,6 +71,15 @@ export interface ValidatableUnit extends Box3D {
   readonly unitNumber: string
   readonly floorLevel: number
   readonly prototypeUlpin: string
+  /**
+   * The parcel this unit belongs to.
+   *
+   * Optional so that the fixtures in `validationSelfCheck.ts`, which construct
+   * bare boxes to prove individual rules, keep compiling unchanged. When it is
+   * absent the parcel-consistency rule simply has nothing to compare, which is
+   * the correct behaviour for a fixture that is not about parcels.
+   */
+  readonly parentParcelId?: string
 }
 
 /** One floor's recorded vertical extent. */
@@ -80,11 +105,59 @@ export interface TopologyInput {
   readonly expectedUnitsPerFloor: number
   /** How many units the configuration says the building should hold in total. */
   readonly expectedTotalUnits: number
+
+  /* ── Below the ground datum ──────────────────────────────────────────────
+     All five are optional, and that is the whole compatibility story: a model
+     with no basement passes exactly the input it passed before this phase, the
+     underground rules return nothing, and the report gains no chips about an
+     excavation that does not exist. Nothing above ground changed. */
+
+  /** The underground volumes to validate, if the model has any. */
+  readonly undergroundUnits?: readonly ValidatableUndergroundUnit[]
+  /** The basement levels those volumes are supposed to occupy. */
+  readonly basementLevels?: readonly ValidatableBasementLevel[]
+  /**
+   * The elevation treated as ground. Defaults to `0`.
+   *
+   * A parameter rather than a hard-coded zero so the rule is stated once, by
+   * the caller that owns the datum, and every check compares against the same
+   * value. See `underground/basementConfig.ts`.
+   */
+  readonly groundDatumY?: number
+  /** How many spaces the basement configuration says should exist. */
+  readonly expectedUndergroundSpaces?: number
+  /**
+   * The parcel every 3D space in this model is expected to belong to.
+   *
+   * When absent the parcel-consistency rule is skipped rather than guessed —
+   * the engine reports what it can establish, never what it assumed.
+   */
+  readonly parentParcelId?: string
 }
 
 /** Format a number for a details record without implying survey precision. */
 function m(value: number): string {
   return `${value.toFixed(2)} m`
+}
+
+/**
+ * The identity of one 3D space, on either side of the ground datum.
+ *
+ * The narrow shape the register-wide rules — uniqueness and parcel consistency
+ * — actually need. Both an above-ground unit and an underground space satisfy
+ * it structurally, so those two rules sweep the whole model without either
+ * knowing which kind of record it is looking at, and without a third type
+ * existing for them to be converted into.
+ */
+interface SpaceIdentity {
+  readonly id: string
+  readonly prototypeUlpin: string
+  readonly parentParcelId?: string
+}
+
+/** Every 3D space in the model, above ground and below it, in that order. */
+function allSpaces(input: TopologyInput): readonly SpaceIdentity[] {
+  return [...input.units, ...(input.undergroundUnits ?? [])]
 }
 
 /* ── Rule 1: the building lies inside its parent parcel ──────────────────── */
@@ -325,12 +398,21 @@ function checkFloorHierarchy(input: TopologyInput): ValidationResult[] {
  * crash.
  */
 function checkIdentifierUniqueness(input: TopologyInput): ValidationResult[] {
+  // EVERY 3D space in the model, on both sides of the datum. Uniqueness is a
+  // property of the *register*, not of one storey of it: an underground space
+  // and an apartment sharing an identifier would be exactly as broken as two
+  // apartments sharing one, and a check that only swept the units above ground
+  // would report "all unique" while the register held a collision. The two
+  // encoders make a collision structurally impossible (`F` versus `B` — see
+  // `ulpin/generateUlpin.ts`); this is the check that says so rather than the
+  // thing preventing it.
+  const spaces = allSpaces(input)
   const seen = new Map<string, string[]>()
 
-  for (const unit of input.units) {
-    const existing = seen.get(unit.prototypeUlpin)
-    if (existing === undefined) seen.set(unit.prototypeUlpin, [unit.id])
-    else existing.push(unit.id)
+  for (const space of spaces) {
+    const existing = seen.get(space.prototypeUlpin)
+    if (existing === undefined) seen.set(space.prototypeUlpin, [space.id])
+    else existing.push(space.id)
   }
 
   const duplicates = [...seen.entries()].filter(([, ids]) => ids.length > 1)
@@ -343,18 +425,70 @@ function checkIdentifierUniqueness(input: TopologyInput): ValidationResult[] {
       status: duplicates.length === 0 ? 'pass' : 'fail',
       chip:
         duplicates.length === 0
-          ? `${input.units.length} unique IDs`
+          ? `${spaces.length} unique IDs`
           : `${duplicates.length} duplicate ID(s)`,
       message:
         duplicates.length === 0
-          ? `${input.units.length} prototype 3D ULPIN values, all unique`
+          ? `${spaces.length} prototype 3D ULPIN values across every 3D space, all unique`
           : `${duplicates.length} identifier(s) assigned to more than one property`,
       affectedUnitIds: affected,
       details: {
-        Identifiers: input.units.length,
+        Identifiers: spaces.length,
+        'Above ground': input.units.length,
+        Underground: input.undergroundUnits?.length ?? 0,
         Distinct: seen.size,
         ...(duplicates.length > 0
           ? { Duplicated: duplicates.map(([value]) => value).join(', ') }
+          : {}),
+      },
+    },
+  ]
+}
+
+/* ── Rule 7: every 3D space belongs to the same parent parcel ─────────────── */
+
+/**
+ * Do all the model's volumes — above ground and below it — name one parcel?
+ *
+ * The claim the whole prototype rests on is that a tower and the excavation
+ * under it are **subdivisions of one piece of land**. That is what makes a 3D
+ * ULPIN a *derivation* of a parcel identifier rather than a new namespace, and
+ * it is what the ownership hierarchy in the inspector draws as a descent. If
+ * two spaces ever named different parcels the descent would be a fiction, so
+ * the register checks it rather than assuming it.
+ *
+ * Skipped entirely when the caller does not state an expected parcel: the
+ * engine reports what it can establish and never what it inferred.
+ */
+function checkParcelConsistency(input: TopologyInput): ValidationResult[] {
+  const expected = input.parentParcelId
+  if (expected === undefined) return []
+
+  const spaces = allSpaces(input)
+  const mismatched = spaces.filter(
+    (space) =>
+      space.parentParcelId !== undefined && space.parentParcelId !== expected,
+  )
+  const unstated = spaces.filter((space) => space.parentParcelId === undefined)
+
+  return [
+    {
+      id: 'parcel-consistency',
+      category: 'parcel-consistency',
+      status: mismatched.length === 0 ? 'pass' : 'fail',
+      chip: mismatched.length === 0 ? 'One parcel' : `${mismatched.length} off-parcel`,
+      message:
+        mismatched.length === 0
+          ? `All ${spaces.length} 3D spaces belong to parent parcel ${expected}`
+          : `${mismatched.length} 3D space(s) name a parcel other than ${expected}`,
+      affectedUnitIds: mismatched.map((space) => space.id),
+      details: {
+        'Parent parcel': expected,
+        'Spaces checked': spaces.length - unstated.length,
+        'Above ground': input.units.length,
+        Underground: input.undergroundUnits?.length ?? 0,
+        ...(mismatched.length > 0
+          ? { Mismatched: mismatched.map((space) => space.id).join(', ') }
           : {}),
       },
     },
@@ -528,15 +662,39 @@ function checkStructureCount(input: TopologyInput): ValidationResult[] {
  * first problem" is not a thing a register should ever say.
  *
  * The rules run in the order a person would ask them: is the plot right, is the
- * building on it, are the floors coherent, are the properties inside, are they
- * uniquely named, do any of them collide.
+ * building on it, are the floors coherent, are the properties inside, what lies
+ * below the datum, are they all uniquely named and on one parcel, do any of
+ * them collide.
+ *
+ * THE UNDERGROUND RULES ARE THE SAME ENGINE, NOT A SECOND ONE.
+ * They are declared in `undergroundRules.ts` for readability, they return the
+ * same `ValidationResult` shape, they are summarised by the same
+ * `summariseResults`, and their `affectedUnitIds` flow into the same
+ * `conflictedUnitIds` the scene paints from. There is one validator, and the
+ * status bar cannot end up disagreeing with itself about which half of a model
+ * it is describing. When a model has no basement they contribute nothing.
  */
 export function validateTopology(input: TopologyInput): TopologyReport {
+  const groundDatumY = input.groundDatumY ?? 0
+
   return summariseResults([
     ...checkParcelContainment(input),
     ...checkFloorHierarchy(input),
     ...checkUnitContainment(input),
+    ...checkUnderground({
+      footprint: input.footprint,
+      spaces: input.undergroundUnits ?? [],
+      levels: input.basementLevels ?? [],
+      // The above-ground volumes, so the cross-datum sweep is over the same
+      // records the ownership rule above just tested against each other — a
+      // simulated encroachment is visible to both.
+      aboveGround: input.units,
+      groundDatumY,
+      expectedSpaceCount:
+        input.expectedUndergroundSpaces ?? (input.undergroundUnits?.length ?? 0),
+    }),
     ...checkIdentifierUniqueness(input),
+    ...checkParcelConsistency(input),
     ...checkOwnershipOverlap(input),
     ...checkStructureCount(input),
   ])

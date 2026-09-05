@@ -14,6 +14,7 @@ import {
   getConflictEmphasis,
   type ConflictFocus,
 } from '../simulation/conflictPresentation'
+import type { DatumEmphasis } from '../underground/undergroundView'
 
 /**
  * The building: a stack of floors, each subdivided into independent property
@@ -219,6 +220,22 @@ interface BuildingProps {
    * At `0` this component renders exactly what it rendered before Phase 10.
    */
   conflictFocusAmount: number
+  /**
+   * How strongly this — the **above-ground** — half of the model is drawn, and
+   * whether it is a target, given the underground view.
+   *
+   * A fourth independent reason a unit might be drawn less than solidly, and it
+   * composes with the other three by the same rule: **multiplication, never
+   * override**. Floor isolation ghosts four floors of five; conflict focus
+   * fades the two innocent units on the conflict's floor; this pushes the whole
+   * tower back so the layer under it can be read. None of the four knows about
+   * the others, and every combination of them is defined.
+   *
+   * At the identity value (`{ fillScale: 1, edgeScale: 1, interactive: true,
+   * castsShadow: true }`) this component renders exactly what it rendered
+   * before the underground phase existed.
+   */
+  datumEmphasis: DatumEmphasis
 }
 
 /** A key that identifies a unit's box size, for sharing edge geometry. */
@@ -284,6 +301,7 @@ function Building({
   conflictedUnitIds,
   conflictFocus,
   conflictFocusAmount,
+  datumEmphasis,
 }: BuildingProps) {
   /**
    * Which unit the pointer is over, if any.
@@ -399,9 +417,16 @@ function Building({
           conflictFocus,
           conflictFocusAmount,
         )
-        const fillScale = emphasis.fillScale * conflictEmphasis.fillScale
-        const edgeScale = emphasis.edgeScale * conflictEmphasis.edgeScale
-        const isTargetable = interactive && emphasis.interactive
+        // Three independent emphases, multiplied. See `datumEmphasis` above for
+        // why this is a product rather than a precedence chain.
+        const fillScale =
+          emphasis.fillScale * conflictEmphasis.fillScale * datumEmphasis.fillScale
+        const edgeScale =
+          emphasis.edgeScale * conflictEmphasis.edgeScale * datumEmphasis.edgeScale
+        // Targeting, by contrast, is a conjunction of decisions rather than a
+        // product of fades: every one of them must say yes.
+        const isTargetable =
+          interactive && emphasis.interactive && datumEmphasis.interactive
 
         // One decision, made in one place. See `unitStatus.ts`.
         const status = getUnitStatus(unit.id, {
@@ -432,7 +457,7 @@ function Building({
             name={unit.id}
             position={[centerX + offsetX, centerY, centerZ + offsetZ]}
             scale={[1, reveal, 1]}
-            castShadow={emphasis.castsShadow}
+            castShadow={emphasis.castsShadow && datumEmphasis.castsShadow}
             receiveShadow
             onClick={(event) => onUnitClick(unit.id, event)}
             onPointerOver={(event) => {

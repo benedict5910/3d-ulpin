@@ -3,6 +3,7 @@ import { EdgesGeometry } from 'three'
 
 import { getFloorDisplayOffsetM, type ExplodeAmounts } from './explodedView'
 import { getFloorEmphasis } from './floorIsolation'
+import { getSurfaceEmphasis } from './undergroundView'
 import type { FloorLayout } from './buildingConfig'
 import type { BuildingFootprint } from '../geometry/footprint'
 import { createFloorSlabGeometry, FOOTPRINT_FLAT_ROTATION } from './footprintGeometry'
@@ -68,6 +69,17 @@ interface FloorSlabsProps {
   isolatedFloor: number | null
   /** How far the ghosting transition has got, `0`–`1`. */
   isolationAmount: number
+  /**
+   * How far the underground view has arrived, `0`–`1`.
+   *
+   * The plates ghost with the rest of the surface, for the same reason they ghost
+   * with their floor: five bright slabs in front of a basement would be the
+   * loudest thing on screen while the subject sat behind them. They are also, in
+   * this view, the most useful thing to keep in *outline* — a stack of five
+   * plates seen edge-on is the clearest possible statement of "and the building
+   * is up there".
+   */
+  undergroundAmount: number
 }
 
 function FloorSlabs({
@@ -77,6 +89,7 @@ function FloorSlabs({
   explodeAmounts,
   isolatedFloor,
   isolationAmount,
+  undergroundAmount,
 }: FloorSlabsProps) {
   // Every floor of this prototype has the same plan, so one geometry serves all
   // of them — five meshes, one buffer. If floors ever differ, this becomes a
@@ -104,20 +117,29 @@ function FloorSlabs({
         // while their units faded would leave five bright slabs framing one
         // isolated layer — the opposite of the intended emphasis.
         const emphasis = getFloorEmphasis(floor.level, isolatedFloor, isolationAmount)
+        // The two appearance transforms multiply, exactly as they do for the
+        // units — neither module knows the other exists. See `undergroundView.ts`.
+        const surface = getSurfaceEmphasis(undergroundAmount)
+        const fillScale = emphasis.fillScale * surface.fillScale
+        const edgeScale = emphasis.edgeScale * surface.edgeScale
 
         return (
           // The group carries the module's rotation, exactly like the shell —
           // see `footprintGeometry.ts` for why that rotation and the shape's
           // sign convention must travel together.
           <group key={floor.level} position={[0, y, 0]} rotation={FOOTPRINT_FLAT_ROTATION}>
-            <mesh geometry={slabGeometry} castShadow={emphasis.castsShadow} receiveShadow>
+            <mesh
+              geometry={slabGeometry}
+              castShadow={emphasis.castsShadow && surface.castsShadow}
+              receiveShadow
+            >
               <meshStandardMaterial
                 color={SLAB_COLOR}
                 roughness={0.75}
                 metalness={0.04}
-                transparent={revealed < 1 || emphasis.fillScale < 1}
-                opacity={revealed * emphasis.fillScale}
-                depthWrite={emphasis.fillScale >= 1}
+                transparent={revealed < 1 || fillScale < 1}
+                opacity={revealed * fillScale}
+                depthWrite={fillScale >= 1}
               />
             </mesh>
 
@@ -125,7 +147,7 @@ function FloorSlabs({
               <lineBasicMaterial
                 color={SLAB_EDGE_COLOR}
                 transparent
-                opacity={0.45 * revealed * emphasis.edgeScale}
+                opacity={0.45 * revealed * edgeScale}
               />
             </lineSegments>
           </group>

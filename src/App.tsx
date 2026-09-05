@@ -41,6 +41,7 @@ import {
 } from './scene/cameraPresets'
 import type { CameraRequest } from './scene/CameraRig'
 import {
+  buildBasementPlanCentres,
   buildFloorPlanCentres,
   EXPLODE_FLOOR_DURATION_MS,
   EXPLODE_UNIT_DURATION_MS,
@@ -55,6 +56,21 @@ import {
   ISOLATION_DURATION_MS,
 } from './scene/floorIsolation'
 import { buildApartmentUnits, findUnitById } from './scene/unitLayout'
+import {
+  buildBasementLevels,
+  DEFAULT_BASEMENT_CONFIG,
+  getTotalDepthM,
+  getTotalUndergroundSpaces,
+  GROUND_DATUM_Y,
+} from './underground/basementConfig'
+import { buildUndergroundSpaces } from './underground/undergroundLayout'
+import {
+  getAboveGroundEmphasis,
+  getUndergroundEmphasis,
+  UNDERGROUND_DURATION_MS,
+} from './underground/undergroundView'
+import { runUndergroundSelfCheck } from './underground/undergroundSelfCheck'
+import { resolveSelectedRecord } from './ui/spaceRecord'
 import { runPrototypeUlpinSelfCheck } from './ulpin/ulpinSelfCheck'
 import {
   applyConflictSimulation,
@@ -197,6 +213,36 @@ function App() {
    */
   const floors = useMemo(() => buildFloorLayouts(config), [config])
 
+  /* ── Below the ground datum ───────────────────────────────────────────────
+     The same three lines the building above needs — a config, a set of level
+     layouts, and the volumes generated from them — and they read the SAME
+     footprint. That is the cadastral claim: the excavation lies under the
+     building's own plan, so it is cut from the building's own ring rather than
+     from a second polygon that would have to be kept in step by hand. */
+
+  const basementConfig = DEFAULT_BASEMENT_CONFIG
+  const totalDepthM = getTotalDepthM(basementConfig)
+
+  const basementLevels = useMemo(
+    () => buildBasementLevels(basementConfig),
+    [basementConfig],
+  )
+
+  /**
+   * The four underground spaces, generated once from the footprint and the
+   * basement config.
+   *
+   * Generated eagerly beside the twenty units above, and for the same reason:
+   * they are pure data, they cost nothing, and building them at page load means
+   * the basement is part of *the cadastre that gets generated* rather than a
+   * second thing that appears later. Nothing renders them until the workflow
+   * says so.
+   */
+  const undergroundSpaces = useMemo(
+    () => buildUndergroundSpaces(basementConfig, footprint, basementLevels),
+    [basementConfig, footprint, basementLevels],
+  )
+
   /**
    * The twenty property units, generated once from the footprint and the config.
    *
@@ -252,6 +298,12 @@ function App() {
       // red volume on screen is the engine's own intersection bounds.
       // See `simulation/conflictPresentationSelfCheck.ts`.
       runConflictPresentationSelfCheck()
+
+      // The basement is where the model claims it is, it is cut from the same
+      // footprint as the building, its identifiers cannot collide with the
+      // ones above ground, and touching the datum is valid where crossing it
+      // is not. See `underground/undergroundSelfCheck.ts`.
+      runUndergroundSelfCheck()
 
       // The prototype's grid subdivision assumes a rectangular plan (see
       // `scene/unitLayout.ts`). Warn rather than fail: an irregular footprint
@@ -515,6 +567,19 @@ function App() {
   )
 
   /**
+   * And the plan centre of every basement level, measured the same way.
+   *
+   * The below-ground half of the same fact, from the same shared helper, so a
+   * volume below the datum disperses about the middle of its own level exactly
+   * as a flat disperses about the middle of its floor. The excavation carries no
+   * conflict simulation, so there is only one array to measure.
+   */
+  const basementPlanCentres = useMemo(
+    () => buildBasementPlanCentres(undergroundSpaces),
+    [undergroundSpaces],
+  )
+
+  /**
    * Floor isolation: one layer brought forward, the rest ghosted.
    *
    * A 1-based floor level, or `null` for "all floors". Independent of
@@ -557,6 +622,50 @@ function App() {
     [isolatedFloor, units],
   )
 
+  /* ── Underground view: which side of the datum is being read ─────────────
+     A presentation state, like floor isolation and the exploded view, and it
+     obeys the same two rules they do: emphasis MULTIPLIES rather than
+     overrides, and not one recorded bound changes. The basement stays at
+     −3.0 → 0.0 m whether the mode is on or off; what changes is how strongly
+     each half of the model is drawn, which half is clickable, how far the
+     camera may tip, and how opaque the ground plane is. */
+
+  const [isUndergroundView, setIsUndergroundView] = useState(false)
+
+  /**
+   * How far the transition has got, `0`–`1`. Eased both ways.
+   *
+   * Gated on `visuals.isSettled` for the same reason the explosion and the
+   * isolation are: running a second transform over meshes that are still
+   * arriving makes neither animation readable.
+   */
+  const undergroundAmount = useFadeProgress(
+    isUndergroundView && visuals.isSettled,
+    {
+      durationMs: UNDERGROUND_DURATION_MS,
+      reverseDurationMs: UNDERGROUND_DURATION_MS,
+      easing: EASE_IN_OUT_CUBIC,
+    },
+  )
+
+  /**
+   * How strongly each half of the model is drawn, from that one scalar.
+   *
+   * Derived here and passed down rather than computed per mesh: twenty-four
+   * boxes would otherwise each re-derive the same two objects on every frame of
+   * the transition. See `underground/undergroundView.ts` for the values and for
+   * the stated priority rule — the side of the datum you are looking at is the
+   * side you can select on.
+   */
+  const aboveGroundEmphasis = useMemo(
+    () => getAboveGroundEmphasis(undergroundAmount),
+    [undergroundAmount],
+  )
+  const undergroundEmphasis = useMemo(
+    () => getUndergroundEmphasis(undergroundAmount),
+    [undergroundAmount],
+  )
+
   /* ── Topology validation ────────────────────────────────────────────────
      THE ENGINE IS POINTED AT LOGICAL GEOMETRY AND NOTHING ELSE.
 
@@ -591,8 +700,35 @@ function App() {
       totalHeightM,
       expectedUnitsPerFloor: getUnitsPerFloor(config),
       expectedTotalUnits: getTotalUnits(config),
+
+      // Below the datum. The engine validates the whole record in one pass —
+      // there is no second validator for the basement, and no way for the
+      // status bar to be describing one half of a model while the scene shows
+      // the other. The generated excavation is canonical here, exactly as
+      // `units` are: the conflict simulation stages an above-ground
+      // encroachment and has nothing to say about the excavation.
+      undergroundUnits: undergroundSpaces,
+      basementLevels,
+      groundDatumY: GROUND_DATUM_Y,
+      expectedUndergroundSpaces: getTotalUndergroundSpaces(basementConfig),
+      // Stated once, by the layer that owns the parcel, so the
+      // parcel-consistency rule compares against a fact rather than against
+      // whichever record it happened to see first.
+      parentParcelId: parcel.parcelId,
     })
-  }, [isGenerated, parcel.parcelBoundaryMetric, footprint, units, floors, totalHeightM, config])
+  }, [
+    isGenerated,
+    parcel.parcelBoundaryMetric,
+    parcel.parcelId,
+    footprint,
+    units,
+    floors,
+    totalHeightM,
+    config,
+    undergroundSpaces,
+    basementLevels,
+    basementConfig,
+  ])
 
   /**
    * The conflicting pairs themselves, for the alert and the conflict panel.
@@ -670,10 +806,32 @@ function App() {
    */
   const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null)
 
-  /** Resolve the id back to the one generated record it names. */
+  /**
+   * Resolve the id back to the one generated *unit* it names, or `null`.
+   *
+   * Still above-ground-only, deliberately: the three things that read it — the
+   * `unit` camera preset, the exploded-view framing and the conflict handler's
+   * bookkeeping — are all about the upward stack, and handing them an
+   * underground space would make each of them quietly wrong. The panel that
+   * shows *whatever* is selected reads `selectedRecord` below instead.
+   */
   const selectedUnit = useMemo(
     () => findUnitById(units, selectedUnitId),
     [units, selectedUnitId],
+  )
+
+  /**
+   * The selected volume's cadastral record, on either side of the datum.
+   *
+   * **One selection, one resolver, one inspector.** `selectedUnitId` is the
+   * same single string it has been since Phase 5; `resolveSelectedRecord` asks
+   * both arrays what it points at and flattens the answer into the shape the
+   * inspector renders. There is no second selection state and no combination in
+   * which a unit and a space are both selected. See `ui/spaceRecord.ts`.
+   */
+  const selectedRecord = useMemo(
+    () => resolveSelectedRecord(units, undergroundSpaces, selectedUnitId),
+    [units, undergroundSpaces, selectedUnitId],
   )
 
   /* ── Camera ─────────────────────────────────────────────────────────────
@@ -716,6 +874,11 @@ function App() {
       // The settled framing, not the animating one — the camera flies to one
       // destination rather than chasing the property while it slides.
       conflictFraming,
+      // The excavation, so the `underground` preset frames the volumes' own
+      // recorded bounds rather than a depth read off the config.
+      undergroundSpaces,
+      basementLevelCount: basementConfig.numberOfLevels,
+      totalDepthM,
     }),
     [
       footprintMetrics,
@@ -726,6 +889,9 @@ function App() {
       floorPlanCentres,
       isolatedFloorLayout,
       conflictFraming,
+      undergroundSpaces,
+      basementConfig.numberOfLevels,
+      totalDepthM,
     ],
   )
 
@@ -762,8 +928,19 @@ function App() {
         floorPlanCentres,
         isolatedFloor: null,
         conflictFraming: null,
+        undergroundSpaces,
+        basementLevelCount: basementConfig.numberOfLevels,
+        totalDepthM,
       }),
-    [footprintMetrics, totalHeightM, config.numberOfFloors, floorPlanCentres],
+    [
+      footprintMetrics,
+      totalHeightM,
+      config.numberOfFloors,
+      floorPlanCentres,
+      undergroundSpaces,
+      basementConfig.numberOfLevels,
+      totalDepthM,
+    ],
   )
 
   /* ── Workflow actions ───────────────────────────────────────────────────── */
@@ -817,6 +994,54 @@ function App() {
     [applyCameraView, floors, presetContext, selectedUnit],
   )
 
+  /**
+   * Enter or leave the underground view — one action, three consequences.
+   *
+   * Modelled directly on `handleIsolateFloor`, because it is the same kind of
+   * control: a presentation instruction that would be three things to remember
+   * if the interface did not do them together.
+   *
+   *   1. **The mode changes.**
+   *   2. **A selection on the wrong side of the datum is cleared.** The stated
+   *      priority rule is that the side you are looking at is the side you can
+   *      select on (see `underground/undergroundView.ts`), so a selection made
+   *      on the other side would leave the inspector describing a property the
+   *      presenter has just pushed into the background — and the `unit` camera
+   *      preset would fly to it.
+   *   3. **The camera frames the new subject.** Entering goes to the
+   *      `underground` preset, which puts the eye just above the datum and aims
+   *      below it so the tower, the datum and the basement are in one frame.
+   *      Leaving returns to the building view. That is what makes this a single
+   *      rehearsable click rather than a mode change followed by a hunt.
+   *
+   * The camera view is computed with the *new* state spliced in where it
+   * matters, because state set in this callback is not readable until the next
+   * render — the same trick `handleIsolateFloor` and the conflict handler use.
+   */
+  const handleToggleUndergroundView = useCallback(() => {
+    const entering = !isUndergroundView
+    setIsUndergroundView(entering)
+
+    // Whichever side is about to become context loses its selection.
+    if (entering) {
+      if (selectedUnit !== null) setSelectedUnitId(null)
+    } else if (selectedRecord !== null && selectedRecord.isUnderground) {
+      setSelectedUnitId(null)
+    }
+
+    if (entering) {
+      applyCameraView(
+        'underground',
+        getPresetView('underground', { ...presetContext, selectedUnit: null }),
+      )
+    } else {
+      applyCameraView(
+        'building',
+        getPresetView('building', { ...presetContext, selectedUnit: null }),
+      )
+    }
+  }, [isUndergroundView, selectedUnit, selectedRecord, applyCameraView, presetContext])
+
   /* ── Conflict focus: a presentation state, entered and left as one action ──
      THE PROBLEM THIS SOLVES
      Before Phase 10 the simulate button changed the record and left the
@@ -848,6 +1073,7 @@ function App() {
     isolatedFloor: number | null
     preset: CameraPresetId
     selectedUnitId: string | null
+    isUndergroundView: boolean
   } | null>(null)
 
   const handleToggleSimulation = useCallback(() => {
@@ -861,11 +1087,18 @@ function App() {
           isolatedFloor,
           preset: activePreset,
           selectedUnitId,
+          isUndergroundView,
         }
       }
 
       setIsSimulatingConflict(true)
       setExplodeMode('none')
+      // The staged conflict is between two apartments on one floor above
+      // ground. Presenting it from below the datum would put the ghosted tower
+      // between the camera and the thing it is meant to be showing, so the
+      // underground view stands down for the same reason the explosion does.
+      // It is remembered and restored with the rest of the displaced state.
+      setIsUndergroundView(false)
       setSelectedUnitId(null)
 
       const conflictFloor = settledConflictFocus?.floorLevel ?? null
@@ -908,6 +1141,7 @@ function App() {
     setExplodeMode(previous.explodeMode)
     setIsolatedFloor(previous.isolatedFloor)
     setSelectedUnitId(previous.selectedUnitId)
+    setIsUndergroundView(previous.isUndergroundView)
 
     const layout =
       previous.isolatedFloor === null
@@ -963,6 +1197,7 @@ function App() {
     setSelectedUnitId(null)
     setExplodeMode('none')
     setIsolatedFloor(null)
+    setIsUndergroundView(false)
     setIsValidationDetailOpen(false)
     setIsSimulatingConflict(false)
     // The remembered pre-conflict view describes a building that is about to
@@ -993,6 +1228,12 @@ function App() {
         floorCount: config.numberOfFloors,
         totalHeightM,
         unitCount: units.length,
+        // Both below-ground figures are read off the model that is actually
+        // rendered and validated, never restated: the count is the length of
+        // the generated array, and the depth is the same `getTotalDepthM` the
+        // scene and the camera presets measure the excavation with.
+        undergroundCount: undergroundSpaces.length,
+        basementDepthM: totalDepthM,
         validation: validationReport,
       }),
     [
@@ -1004,6 +1245,8 @@ function App() {
       config.numberOfFloors,
       totalHeightM,
       units.length,
+      undergroundSpaces.length,
+      totalDepthM,
     ],
   )
 
@@ -1057,6 +1300,12 @@ function App() {
             selectedUnitId={selectedUnitId}
             selectedUnit={selectedUnit}
             onSelectUnit={setSelectedUnitId}
+            undergroundSpaces={undergroundSpaces}
+            aboveGroundEmphasis={aboveGroundEmphasis}
+            undergroundEmphasis={undergroundEmphasis}
+            undergroundAmount={undergroundAmount}
+            basementLevels={basementLevels}
+            basementPlanCentres={basementPlanCentres}
           />
 
           {/* Still an overlay, and still deliberately so: the summary describes
@@ -1065,6 +1314,8 @@ function App() {
             config={config}
             footprintMetrics={footprintMetrics}
             units={units}
+            basementConfig={basementConfig}
+            undergroundSpaces={undergroundSpaces}
             isGenerated={isGenerated}
           />
 
@@ -1083,6 +1334,9 @@ function App() {
             onSelectExplodeMode={setExplodeMode}
             isSettled={visuals.isSettled}
             conflictFocusActive={isConflictFocusActive}
+            isUndergroundView={isUndergroundView}
+            onToggleUndergroundView={handleToggleUndergroundView}
+            hasUnderground={undergroundSpaces.length > 0}
           />
 
           {/* What the system is doing, for the two seconds it is doing it. */}
@@ -1132,10 +1386,14 @@ function App() {
           {isValidationDetailOpen && validationReport !== null && (
             <ValidationDetails report={validationReport} />
           )}
+          {/* One inspector for both sides of the datum. It is handed a
+              `SpaceRecord`, so it neither knows nor asks which kind of volume
+              it is describing — see `ui/spaceRecord.ts`. */}
           <PropertyInspector
-            unit={selectedUnit}
+            record={selectedRecord}
             isConflicted={
-              selectedUnit !== null && conflictedUnitIds.includes(selectedUnit.id)
+              selectedRecord !== null &&
+              conflictedUnitIds.includes(selectedRecord.id)
             }
           />
         </section>
@@ -1152,7 +1410,7 @@ function App() {
         </p>
         <p className="hint">
           {isGenerated && visuals.isSettled
-            ? 'Click a unit to inspect · Presets to reframe · Exploded view to separate floors · Basemap © OpenStreetMap contributors'
+            ? 'Click a unit to inspect · Presets to reframe · Exploded view to separate floors · Underground to read below the y = 0 datum · Basemap © OpenStreetMap contributors'
             : 'Press Generate 3D Cadastre to extrude the footprint · Drag to orbit · Basemap © OpenStreetMap contributors'}
         </p>
       </footer>

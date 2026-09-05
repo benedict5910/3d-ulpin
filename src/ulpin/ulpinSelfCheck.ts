@@ -17,7 +17,9 @@
 import { DEMO_PARCEL_IDENTITY } from './parcelIdentity'
 import {
   findDuplicateIdentifiers,
+  formatUndergroundSpaceCode,
   generatePrototype3DULPIN,
+  generateUndergroundPrototype3DULPIN,
 } from './generateUlpin'
 
 /** One assertion's outcome. */
@@ -47,6 +49,31 @@ const KNOWN_ANSWERS: ReadonlyArray<{
 ]
 
 /**
+ * The known-answer cases for the **below-ground** extension (Phase 11).
+ *
+ * Literal strings again, and for a sharper version of the same reason: these
+ * four are the exact identifiers the phase's brief specifies, so a change to the
+ * `B` prefix, the use letters, the padding or the field order breaks them here
+ * rather than being noticed in a demo.
+ *
+ * The `B02` case is included although the demo has one basement level. It is the
+ * check that the level segment is really the level and not a constant — the kind
+ * of thing that cannot go wrong while there is only ever one of something.
+ */
+const KNOWN_UNDERGROUND_ANSWERS: ReadonlyArray<{
+  readonly basementLevel: number
+  readonly typeCode: string
+  readonly indexWithinType: number
+  readonly expected: string
+}> = [
+  { basementLevel: 1, typeCode: 'P', indexWithinType: 1, expected: 'KA-BLR-0482-001928-B01-P01' },
+  { basementLevel: 1, typeCode: 'P', indexWithinType: 2, expected: 'KA-BLR-0482-001928-B01-P02' },
+  { basementLevel: 1, typeCode: 'S', indexWithinType: 1, expected: 'KA-BLR-0482-001928-B01-S01' },
+  { basementLevel: 1, typeCode: 'U', indexWithinType: 1, expected: 'KA-BLR-0482-001928-B01-U01' },
+  { basementLevel: 2, typeCode: 'P', indexWithinType: 1, expected: 'KA-BLR-0482-001928-B02-P01' },
+]
+
+/**
  * Run every check and return the results. Pure: no console, no throw.
  *
  * `identifiers` defaults to the twenty the demo building produces, but can be
@@ -69,6 +96,62 @@ export function checkPrototypeUlpin(identifiers?: string[]): CheckResult[] {
       }
     },
   )
+
+  for (const { basementLevel, typeCode, indexWithinType, expected } of
+    KNOWN_UNDERGROUND_ANSWERS) {
+    const actual = generateUndergroundPrototype3DULPIN(
+      DEMO_PARCEL_IDENTITY,
+      basementLevel,
+      typeCode,
+      indexWithinType,
+    )
+    results.push({
+      name: `basement ${basementLevel}, ${typeCode}${indexWithinType}`,
+      passed: actual === expected,
+      expected,
+      actual,
+    })
+  }
+
+  // The two tiers share a parent parcel and cannot collide: `F` and `B` occupy
+  // the same position and differ in the first character, which is the whole
+  // reason the basement is not encoded as `F00`.
+  results.push({
+    name: 'an above-ground and a below-ground identifier never collide',
+    passed:
+      generatePrototype3DULPIN(DEMO_PARCEL_IDENTITY, 1, 1) !==
+      generateUndergroundPrototype3DULPIN(DEMO_PARCEL_IDENTITY, 1, 'P', 1),
+    expected: 'different strings',
+    actual: `${generatePrototype3DULPIN(DEMO_PARCEL_IDENTITY, 1, 1)} vs ${generateUndergroundPrototype3DULPIN(DEMO_PARCEL_IDENTITY, 1, 'P', 1)}`,
+  })
+
+  // A malformed use code must fail where it was introduced, not produce a
+  // plausible-looking identifier of the wrong shape.
+  let rejectedBadCode = false
+  try {
+    formatUndergroundSpaceCode('PK', 1)
+  } catch {
+    rejectedBadCode = true
+  }
+  results.push({
+    name: 'a multi-letter use code is rejected rather than encoded',
+    passed: rejectedBadCode,
+    expected: 'throws',
+    actual: rejectedBadCode ? 'throws' : 'produced an identifier',
+  })
+
+  let rejectedZeroLevel = false
+  try {
+    generateUndergroundPrototype3DULPIN(DEMO_PARCEL_IDENTITY, 0, 'P', 1)
+  } catch {
+    rejectedZeroLevel = true
+  }
+  results.push({
+    name: 'basement level 0 is rejected (levels are 1-based, like floors)',
+    passed: rejectedZeroLevel,
+    expected: 'throws',
+    actual: rejectedZeroLevel ? 'throws' : 'produced an identifier',
+  })
 
   const subjects =
     identifiers ??
